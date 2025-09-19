@@ -1025,68 +1025,79 @@ body.modal-open { overflow: hidden; }
           <table>${head}<tbody>${rows}</tbody></table>
         </div>`;
     }
-    /* === Series por día/hora para minigráficos del modal === */
+    /* === Series por día/hora para minigráficos del modal (FIX orden N..N-6) === */
 function zoneBuildTimeSeries(zoneRows) {
-  const today = new Date(); today.setHours(0,0,0,0);
-  const days = [];
-  for (let i=6;i>=0;i--) days.push(new Date(today.getTime() - i*DAY_MS)); // [N-6 .. N]
-  const dayKeys = days.map(d => toDayKey(d));
-  const perDay = new Map(dayKeys.map(k => [k, new Set()])); // OTs únicas/día
-  const perHour = new Array(24).fill(0);
+  // dayCounts: index 0 = N-6 ... index 6 = N (hoy)
+  const dayCounts  = Array(7).fill(0);
+  const hourCounts = Array(24).fill(0);
+
+  const todayEpoch = toDayKey(new Date());
 
   zoneRows.forEach(r => {
-    const dt = parseDate(r.fechaCreacion); if (!dt) return;
-    const dkey = toDayKey(dt);
-    const ot = r.numeroCita || (r.calle+'|'+r.fechaCreacion);
-    if (perDay.has(dkey)) perDay.get(dkey).add(ot);
-    perHour[dt.getHours()]++;
+    const dt = parseDate(r.fechaCreacion);
+    if (!dt) return;
+
+    // ----- horas (0..23) acumulado en ventana
+    const h = dt.getHours();
+    if (!isNaN(h) && h >= 0 && h < 24) hourCounts[h]++;
+
+    // ----- días: mapeo correcto a N..N-6
+    const dk = toDayKey(dt);
+    const diffDays = Math.round((todayEpoch - dk) / DAY_MS); // 0=hoy, 1=ayer, ...
+    if (diffDays >= 0 && diffDays < 7) {
+      // queremos que el eje vaya N-6 ... N-1, N
+      // diffDays 0 -> index 6 (derecha, "Hoy")
+      // diffDays 1 -> index 5 (Ayer)
+      // ...
+      const idx = 6 - diffDays;
+      dayCounts[idx]++;
+    }
   });
 
-  const dayCounts = dayKeys.map(k => (perDay.get(k) ? perDay.get(k).size : 0));
-  return { days, dayCounts, perHour };
+  return { dayCounts, hourCounts };
 }
 
 function zoneMiniChartsHTML(zoneRows) {
-  const { days, dayCounts, perHour } = zoneBuildTimeSeries(zoneRows);
+  const { dayCounts, hourCounts } = zoneBuildTimeSeries(zoneRows);
 
-  // barras por día (últimos 7)
-  const maxD = Math.max(1, ...dayCounts);
-  const dayBars = dayCounts.map((c,i) => {
-    const h = Math.max(3, Math.round(38*c/maxD));
-    const label = `${days[i].toLocaleDateString()}: ${c} OTs`;
-    const hot = (i===6 || i===5) && c>=3 ? ' hot' : '';
-    return `<i class="${hot}" style="height:${h}px" title="${label}"></i>`;
+  // etiquetas para los 7 días (izq->der): N-6 ... N-2, Ayer, Hoy
+  const dayLabels = ['N-6','N-5','N-4','N-3','N-2','Ayer','Hoy'];
+
+  const maxDay  = Math.max(1, ...dayCounts);
+  const maxHour = Math.max(1, ...hourCounts);
+
+  const dayBars = dayCounts.map((v, i) => {
+    const h = Math.max(3, Math.round((v / maxDay) * 40)); // alto 40px
+    return `<div title="${dayLabels[i]}: ${v} OTs" style="height:${h}px;width:12px;background:#6366f1;border-radius:3px;"></div>`;
   }).join('');
 
-  // barras por hora (0..23)
-  const maxH = Math.max(1, ...perHour);
-  const hourBars = perHour.map((c,h) => {
-    const hh = Math.max(2, Math.round(38*c/maxH));
-    const label = `${h.toString().padStart(2,'0')}:00 — ${c} OTs`;
-    const hot = c>0 && (h>=9 && h<=21) ? ' hot' : '';
-    return `<i class="${hot}" style="height:${hh}px" title="${label}"></i>`;
+  const hourBars = hourCounts.map((v, i) => {
+    const h = Math.max(2, Math.round((v / maxHour) * 36)); // alto 36px
+    const label = String(i).padStart(2,'0') + 'h: ' + v + ' OTs';
+    return `<div title="${label}" style="height:${h}px;width:8px;background:#c7d2fe;border-radius:2px;"></div>`;
   }).join('');
 
-  const dayLegend = `<div class="mini-legend"><span>N-6</span><span>N-5</span><span>N-4</span><span>N-3</span><span>N-2</span><span>Ayer</span><span>Hoy</span></div>`;
-  const hourLegend = `<div class="mini-legend"><span>00h</span><span>06h</span><span>12h</span><span>18h</span><span>23h</span></div>`;
+  const dayAxis = dayLabels.map(l => `<span style="width:12px;text-align:center;font-size:10px;color:#9ca3af;">${l}</span>`).join('');
+  const hourAxis = ['00h','06h','12h','18h','23h'];
+  const hourAxisHtml = hourAxis.map(l => `<span style="flex:1;text-align:center;font-size:10px;color:#9ca3af;">${l}</span>`).join('');
 
   return `
-    <div class="zone-mini">
+    <div style="margin:4px 0 12px 0; display:grid; gap:10px;">
       <div>
-        <div class="mini-title">OTs por día (últimos 7)</div>
-        <div class="mini-chart">${dayBars}</div>
-        ${dayLegend}
+        <div style="font-weight:800;font-size:12px;margin-bottom:6px;color:#111827;">OTs por día (últimos 7)</div>
+        <div style="display:flex;align-items:flex-end;gap:6px;height:46px;">${dayBars}</div>
+        <div style="display:flex;gap:6px;margin-top:4px;">${dayAxis}</div>
       </div>
+
       <div>
-        <div class="mini-title">OTs por hora (acumulado ventana)</div>
-        <div class="hour-chart">${hourBars}</div>
-        ${hourLegend}
+        <div style="font-weight:800;font-size:12px;margin-bottom:6px;color:#111827;">OTs por hora (acumulado ventana)</div>
+        <div style="display:flex;align-items:flex-end;gap:3px;height:40px;">${hourBars}</div>
+        <div style="display:flex;justify-content:space-between;margin-top:4px;">${hourAxisHtml}</div>
       </div>
-    </div>`;
+    </div>
+  `;
 }
-
-
-    // ===== Modal de Zona =====
+// ===== Modal de Zona =====
    // ===== Modal de Zona (con minigráficos y toolbar) =====
 function openZoneModal(zona) {
   const modal = document.getElementById('zoneModal');
@@ -1112,8 +1123,9 @@ function openZoneModal(zona) {
         <span>Seleccionar todo</span>
       </label>
     </div>
-    ${zoneMiniChartsHTML(zoneData)}
-  `;
+    html += zoneMiniChartsHTML(zoneData);
+
+
 
   // Agrupar por fecha y por OT
   const dayMap = new Map();
