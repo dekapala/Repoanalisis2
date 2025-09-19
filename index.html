@@ -211,7 +211,7 @@ body.modal-open { overflow: hidden; }
   </div>
 
   <footer id="footerInfo">v4.0 • Merge A/B • FTTH 9xx • Salud y Nodos • Export por zona/eco</footer>
-  <script>
+  
     /* ========= ESTADO GLOBAL ========= */
     let processedData = null;
     let currentTab = 'edificios';
@@ -662,10 +662,13 @@ const fechaStr = toStrDateTime(
       });
     }
     /* ========= ANALÍTICA ========= */
-  <script>
+  
 // Reemplazar toda la función por esta:
 function analyzeData(rows) {
   const result = { zonas: [], resumenDiario: [], dispositivos: [], stats: {} };
+  // ... (tu versión larga de analyzeData tal como la pegaste, SIN <script> ... </script>)
+  return result;
+}
 
   // ---- Agrupar por zona
   const zoneGroups = {};
@@ -767,12 +770,7 @@ function analyzeData(rows) {
     });
   });
 
-  // ordenar zonas
-  result.zonas.sort((a,b) =>
-    (b.ingresoN  - a.ingresoN)  ||
-    (b.ingresoN1 - a.ingresoN1) ||
-    (b.totalOTs  - a.totalOTs)
-  );
+
 
   // ---- Resumen diario (igual que lo tenías)
   const dailyGroups = {}; const citasPorDia = {};
@@ -1195,7 +1193,7 @@ function renderWeekHourHeatmap(rows){
   for(let h=0; h<24; h++){
     html += `<th style="background:linear-gradient(135deg, var(--grad1) 0%, var(--grad2) 100%);color:#fff;padding:6px 8px;font-size:12px;">${String(h).padStart(2,'0')}</th>`;
   }
-    <script>
+    
 function renderWeekBars(weekCounts) {
   const order = [1,2,3,4,5,6,0]; // Lun..Dom
   const labels = ['L','M','X','J','V','S','D'];
@@ -1207,7 +1205,6 @@ function renderWeekBars(weekCounts) {
   }).join('');
   return `<div style="display:flex;align-items:flex-end;gap:4px;height:36px;">${bars}</div>`;
 }
-</script>
 
   html += '</tr></thead><tbody>';
 
@@ -1370,7 +1367,7 @@ function renderWeekBars(weekCounts) {
     }
 
     // ===== Render: Zonas =====
-  <script>
+ 
 function displayZonas(zonas) {
   if (!zonas.length) return '<div class="loading"><p>No se encontraron zonas</p></div>';
   const q = (document.getElementById('quickSearch')?.value || '').trim().toLowerCase();
@@ -1413,7 +1410,6 @@ function displayZonas(zonas) {
     <div class="preview-title">📍 Análisis de Zonas</div>
     <div class="table-container"><table>${head}<tbody>${rows}</tbody></table></div>`;
 }
-</script>
 
 
     /* === Series por día/hora para minigráficos del modal (FIX orden N..N-6) === */
@@ -1519,7 +1515,7 @@ function displayDiagnosticos(zonas) {
 }
 
 
-<script>
+
 function analyzeDiagnosticsForZone(rows) {
   if (!rows || !rows.length) return 'Sin datos.';
   const counts = new Map();
@@ -1535,7 +1531,6 @@ function analyzeDiagnosticsForZone(rows) {
   parts.push(`% CATEC: <strong>${catecPct}%</strong> (${catec} de ${total})`);
   return parts.join(' • ');
 }
-</script>
 
 // ===== Modal de Zona =====
    // ===== Modal de Zona (con minigráficos y toolbar) =====
