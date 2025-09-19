@@ -678,34 +678,36 @@ const fechaStr = toStrDateTime(
       });
 
       // ---- Métricas por zona (N, N-1, etc.) y push al resultado
-      Object.entries(zoneGroups).forEach(([zona, casos]) => {
-        const seenOTperDay = new Map(); // day -> Set(OT)
-        casos.forEach(c => {
-          const dt = parseDate(c.fechaCreacion); if (!dt) return;
-          const dk = toDayKey(dt);
-          if (!seenOTperDay.has(dk)) seenOTperDay.set(dk, new Set());
-          const ot = c.numeroCita || ((c.calle || '') + '|' + c.fechaCreacion);
-          seenOTperDay.get(dk).add(ot);
-        });
+     // ---- Métricas por zona (N, N-1, etc.) y push al resultado
+Object.entries(zoneGroups).forEach(([zona, casos]) => {
+  // Conteos por día/OT
+  const seenOTperDay = new Map(); // day -> Set(OT)
+  casos.forEach(c => {
+    const dt = parseDate(c.fechaCreacion); if (!dt) return;
+    const dk = toDayKey(dt);
+    if (!seenOTperDay.has(dk)) seenOTperDay.set(dk, new Set());
+    const ot = c.numeroCita || ((c.calle || '') + '|' + c.fechaCreacion);
+    seenOTperDay.get(dk).add(ot);
+  });
 
-        const todayEpoch   = toDayKey(new Date());
-        const ingresoN     = seenOTperDay.get(todayEpoch)?.size || 0;
-        const ingresoN1    = seenOTperDay.get(todayEpoch - DAY_MS)?.size || 0;
-        const diasConCasos = Array.from(seenOTperDay.values()).filter(s => s.size > 0).length;
-        const maxOTsEnUnDia= Math.max(0, ...Array.from(seenOTperDay.values()).map(s => s.size));
-        const totalOTs     = citasPorZona[zona].size || casos.length;
-        const nivelRiesgo  = (ingresoN >= 3 || ingresoN1 >= 3) ? 'CRÍTICO' : (maxOTsEnUnDia >= 3 ? 'ALTO' : 'MEDIO');
+  const todayEpoch   = toDayKey(new Date());
+  const ingresoN     = seenOTperDay.get(todayEpoch)?.size || 0;
+  const ingresoN1    = seenOTperDay.get(todayEpoch - DAY_MS)?.size || 0;
+  const diasConCasos = Array.from(seenOTperDay.values()).filter(s => s.size > 0).length;
+  const maxOTsEnUnDia= Math.max(0, ...Array.from(seenOTperDay.values()).map(s => s.size));
+  const totalOTs     = citasPorZona[zona].size || casos.length;
+  const nivelRiesgo  = (ingresoN >= 3 || ingresoN1 >= 3) ? 'CRÍTICO' : (maxOTsEnUnDia >= 3 ? 'ALTO' : 'MEDIO');
 
-        const nodo = nodesByZone.get(String(zona).toUpperCase()) || { up: 0, down: 0 };
-/* === Diagnósticos por zona (conteo y riesgo) === */
-{
-  const casos = zoneGroups[zona] || [];
-  const diagnosticMap = new Map();          // category -> {count, cases[], color, icon, severity}
-  const dailyDiagnostics = new Map();       // dayEpoch -> Map(category -> count)
+  // Up/Down (si cargaste nodos)
+  const nodo = nodesByZone.get(String(zona).toUpperCase()) || { up: 0, down: 0 };
+
+  // === Diagnósticos por zona ===
+  const diagnosticMap = new Map();    // category -> {count, cases[], color, icon, severity, category}
+  const dailyDiagnostics = new Map(); // dayEpoch -> Map(category -> count)
 
   casos.forEach(c => {
     const diag = c.diagnosticoTecnico || 'Sin diagnóstico';
-    const cat = categorizeDiagnostic(diag);
+    const cat  = categorizeDiagnostic(diag);
 
     // total por categoría
     if (!diagnosticMap.has(cat.category)) diagnosticMap.set(cat.category, { count:0, cases:[], ...cat });
@@ -715,55 +717,46 @@ const fechaStr = toStrDateTime(
     // diario por categoría
     const dt = parseDate(c.fechaCreacion);
     const dayKey = dt ? toDayKey(dt) : null;
-    if (dayKey!=null){
+    if (dayKey != null){
       if (!dailyDiagnostics.has(dayKey)) dailyDiagnostics.set(dayKey, new Map());
       const m = dailyDiagnostics.get(dayKey);
       m.set(cat.category, (m.get(cat.category)||0) + 1);
     }
   });
 
-  // métricas
   const equipmentDamage = diagnosticMap.get('EQUIPMENT_DAMAGE')?.count || 0;
-  const totalCasos = casos.length || 0;
-  const damageRate = totalCasos ? ((equipmentDamage / totalCasos) * 100) : 0;
+  const damageRate = totalOTs ? ((equipmentDamage / totalOTs) * 100) : 0;
   const climaticRisk = damageRate > 30 ? 'ALTO' : damageRate > 15 ? 'MEDIO' : 'BAJO';
 
-  // mutar la zona recién agregada
-  const Z = result.zonas[result.zonas.length-1];
-  Z.diagnosticos = Array.from(diagnosticMap.values());
-  Z.equipmentDamage = equipmentDamage;
-  Z.damageRate = Number(damageRate.toFixed(1));
-  Z.climaticRisk = climaticRisk;
-  Z.dailyDiagnostics = dailyDiagnostics;
-}
+  // Push final de la zona (sin mutar índices inexistentes)
+  result.zonas.push({
+    zona,
+    totalOTs,
+    diasConCasos,
+    ingresoN,
+    ingresoN1,
+    maxOTsEnUnDia,
+    nivelRiesgo,
+    territorio: (casos[0]?.territorio) || '',
+    cmsUp: Number(nodo.up || 0),
+    cmsDown: Number(nodo.down || 0),
 
-       result.zonas.push({
-  zona,
-  totalOTs,
-  diasConCasos,
-  ingresoN,
-  ingresoN1,
-  maxOTsEnUnDia,
-  nivelRiesgo,
-  territorio: casos[0].territorio || '',
-  cmsUp: Number(nodo.up || 0),
-  cmsDown: Number(nodo.down || 0),
-
-  // >>> NUEVO <<<
-  diagnosticos: Array.from(diagMap.values()),
-  equipmentDamage,
-  damageRate: Number(damageRate.toFixed(1)),
-  climaticRisk,
-  dailyDiagnostics: dailyDiag
+    // Diagnósticos
+    diagnosticos: Array.from(diagnosticMap.values()),
+    equipmentDamage,
+    damageRate: Number(damageRate.toFixed(1)),
+    climaticRisk,
+    dailyDiagnostics
+  });
 });
 
+// ordenar zonas: primero N/N-1, luego volumen
+result.zonas.sort((a,b) =>
+  (b.ingresoN  - a.ingresoN)  ||
+  (b.ingresoN1 - a.ingresoN1) ||
+  (b.totalOTs  - a.totalOTs)
+);
 
-      // ordenar zonas: primero N/N-1, luego volumen
-      result.zonas.sort((a,b) =>
-        (b.ingresoN  - a.ingresoN)  ||
-        (b.ingresoN1 - a.ingresoN1) ||
-        (b.totalOTs  - a.totalOTs)
-      );
 
       // ---- Resumen diario
       const dailyGroups = {}; const citasPorDia = {};
