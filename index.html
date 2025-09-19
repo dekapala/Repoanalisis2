@@ -662,72 +662,206 @@ const fechaStr = toStrDateTime(
       });
     }
     /* ========= ANALÍTICA ========= */
-    function analyzeData(rows) {
-      const result = { zonas: [], resumenDiario: [], dispositivos: [], stats: {} };
+  <script>
+// Reemplazar toda la función por esta:
+function analyzeData(rows) {
+  const result = { zonas: [], resumenDiario: [], dispositivos: [], stats: {} };
 
-      // ---- Agrupar por zona
-      const zoneGroups = {};
-      const citasPorZona = {};
-      rows.forEach(r => {
-        const zone = r.zonaTecnicaHFC || r.zonaTecnicaFTTH;
-        if (zone && zone.trim() !== '') {
-          if (!zoneGroups[zone]) { zoneGroups[zone] = []; citasPorZona[zone] = new Set(); }
-          zoneGroups[zone].push(r);
-          if (r.numeroCita) citasPorZona[zone].add(r.numeroCita);
-        }
-      });
-
-      // ---- Métricas por zona (N, N-1, etc.) y push al resultado
-     // ---- Métricas por zona (N, N-1, etc.) y push al resultado
-// ---- Métricas por zona (N, N-1, etc.) y push al resultado
-Object.entries(zoneGroups).forEach(([zona, casos]) => {
-  // Conteos por día/OT (hoy, ayer, etc.)
-  const seenOTperDay = new Map(); // dayEpoch -> Set(OT)
-  casos.forEach(c => {
-    const dt = parseDate(c.fechaCreacion); if (!dt) return;
-    const dk = toDayKey(dt);
-    if (!seenOTperDay.has(dk)) seenOTperDay.set(dk, new Set());
-    const ot = c.numeroCita || ((c.calle || '') + '|' + c.fechaCreacion);
-    seenOTperDay.get(dk).add(ot);
-  });
-
-  const todayEpoch   = toDayKey(new Date());
-  const ingresoN     = seenOTperDay.get(todayEpoch)?.size || 0;
-  const ingresoN1    = seenOTperDay.get(todayEpoch - DAY_MS)?.size || 0;
-  const diasConCasos = Array.from(seenOTperDay.values()).filter(s => s.size > 0).length;
-  const maxOTsEnUnDia= Math.max(0, ...Array.from(seenOTperDay.values()).map(s => s.size));
-  const totalOTs     = citasPorZona[zona].size || casos.length;
-  const nivelRiesgo  = (ingresoN >= 3 || ingresoN1 >= 3) ? 'CRÍTICO' : (maxOTsEnUnDia >= 3 ? 'ALTO' : 'MEDIO');
-
-  // Up/Down (si cargaste nodos)
-  const nodo = nodesByZone.get(String(zona).toUpperCase()) || { up: 0, down: 0 };
-
-  // === Diagnósticos por zona (todas las categorías) ===
-  const diagnosticMap = new Map();    // category -> {count, cases[], color, icon, severity, category}
-  const dailyDiagnostics = new Map(); // dayEpoch -> Map(category -> count)
-
-  casos.forEach(c => {
-    const diag = c.diagnosticoTecnico || 'Sin diagnóstico';
-    const cat  = categorizeDiagnostic(diag);
-
-    if (!diagnosticMap.has(cat.category)) diagnosticMap.set(cat.category, { count:0, cases:[], ...cat });
-    const entry = diagnosticMap.get(cat.category);
-    entry.count++; entry.cases.push(c);
-
-    const dt = parseDate(c.fechaCreacion);
-    const dayKey = dt ? toDayKey(dt) : null;
-    if (dayKey != null){
-      if (!dailyDiagnostics.has(dayKey)) dailyDiagnostics.set(dayKey, new Map());
-      const m = dailyDiagnostics.get(dayKey);
-      m.set(cat.category, (m.get(cat.category)||0) + 1);
+  // ---- Agrupar por zona
+  const zoneGroups = {};
+  const citasPorZona = {};
+  rows.forEach(r => {
+    const zone = r.zonaTecnicaHFC || r.zonaTecnicaFTTH;
+    if (zone && zone.trim() !== '') {
+      if (!zoneGroups[zone]) { zoneGroups[zone] = []; citasPorZona[zone] = new Set(); }
+      zoneGroups[zone].push(r);
+      if (r.numeroCita) citasPorZona[zone].add(r.numeroCita);
     }
   });
 
-  // --- % CATEC por zona (sobre OTs únicas) ---
-  const otCATEC = new Set();
-  casos.forEach(c => {
-    const ot = c.nu
+  // ---- Métricas por zona (N, N-1, etc.) + %CATEC + 7d por día de semana
+  Object.entries(zoneGroups).forEach(([zona, casos]) => {
+    const seenOTperDay = new Map(); // dayEpoch -> Set(OT)
+    casos.forEach(c => {
+      const dt = parseDate(c.fechaCreacion); if (!dt) return;
+      const dk = toDayKey(dt);
+      if (!seenOTperDay.has(dk)) seenOTperDay.set(dk, new Set());
+      const ot = c.numeroCita || ((c.calle || '') + '|' + c.fechaCreacion);
+      seenOTperDay.get(dk).add(ot);
+    });
 
+    const todayEpoch   = toDayKey(new Date());
+    const ingresoN     = seenOTperDay.get(todayEpoch)?.size || 0;
+    const ingresoN1    = seenOTperDay.get(todayEpoch - DAY_MS)?.size || 0;
+    const diasConCasos = Array.from(seenOTperDay.values()).filter(s => s.size > 0).length;
+    const maxOTsEnUnDia= Math.max(0, ...Array.from(seenOTperDay.values()).map(s => s.size));
+
+    // OTs únicas en la zona (incluye filas sin numeroCita)
+    const otSet = new Set();
+    casos.forEach(c => otSet.add(c.numeroCita || ((c.calle||'') + '|' + c.fechaCreacion)));
+    const totalOTs = otSet.size || casos.length;
+
+    const nivelRiesgo  = (ingresoN >= 3 || ingresoN1 >= 3) ? 'CRÍTICO' : (maxOTsEnUnDia >= 3 ? 'ALTO' : 'MEDIO');
+
+    // Up/Down (si cargaste nodos)
+    const nodo = nodesByZone.get(String(zona).toUpperCase()) || { up: 0, down: 0 };
+
+    // Diagnósticos completos
+    const diagnosticMap = new Map();    // category -> {count, cases[], color, icon, severity, category}
+    const dailyDiagnostics = new Map(); // dayEpoch -> Map(category -> count)
+    casos.forEach(c => {
+      const diag = c.diagnosticoTecnico || 'Sin diagnóstico';
+      const cat  = categorizeDiagnostic(diag);
+      if (!diagnosticMap.has(cat.category)) diagnosticMap.set(cat.category, { count:0, cases:[], ...cat });
+      const entry = diagnosticMap.get(cat.category);
+      entry.count++; entry.cases.push(c);
+
+      const dt = parseDate(c.fechaCreacion);
+      if (dt){
+        const dayKey = toDayKey(dt);
+        if (!dailyDiagnostics.has(dayKey)) dailyDiagnostics.set(dayKey, new Map());
+        const m = dailyDiagnostics.get(dayKey);
+        m.set(cat.category, (m.get(cat.category)||0) + 1);
+      }
+    });
+
+    // % CATEC sobre OTs únicas
+    const otCATEC = new Set();
+    casos.forEach(c => {
+      const t = (c.tipoTrabajo||'').toUpperCase();
+      if (t.includes('CATEC')) {
+        const ot = c.numeroCita || ((c.calle||'') + '|' + c.fechaCreacion);
+        otCATEC.add(ot);
+      }
+    });
+    const catecCount = otCATEC.size;
+    const catecRate  = totalOTs ? (catecCount / totalOTs) * 100 : 0;
+
+    // Ingresos últimos 7 días, por día de semana (0=Dom..6=Sáb)
+    const start7 = new Date(); start7.setHours(0,0,0,0); start7.setDate(start7.getDate()-6);
+    const weekCounts = Array(7).fill(0);
+    casos.forEach(c => {
+      const dt = parseDate(c.fechaCreacion); if (!dt) return;
+      if (dt >= start7) weekCounts[dt.getDay()]++;
+    });
+
+    // Push final de la zona
+    result.zonas.push({
+      zona,
+      totalOTs,
+      diasConCasos,
+      ingresoN,
+      ingresoN1,
+      maxOTsEnUnDia,
+      nivelRiesgo,
+      territorio: (casos[0]?.territorio) || '',
+      cmsUp: Number(nodo.up || 0),
+      cmsDown: Number(nodo.down || 0),
+
+      diagnosticos: Array.from(diagnosticMap.values()),
+      dailyDiagnostics,
+
+      catecCount,
+      catecRate: Number(catecRate.toFixed(1)),
+      weekCounts
+    });
+  });
+
+  // ordenar zonas
+  result.zonas.sort((a,b) =>
+    (b.ingresoN  - a.ingresoN)  ||
+    (b.ingresoN1 - a.ingresoN1) ||
+    (b.totalOTs  - a.totalOTs)
+  );
+
+  // ---- Resumen diario (igual que lo tenías)
+  const dailyGroups = {}; const citasPorDia = {};
+  rows.forEach(r => {
+    const f = r.fechaCreacion;
+    if (!dailyGroups[f]) { dailyGroups[f] = []; citasPorDia[f] = new Set(); }
+    dailyGroups[f].push(r);
+    if (r.numeroCita) citasPorDia[f].add(r.numeroCita);
+  });
+  Object.entries(dailyGroups).forEach(([fecha, casos]) => {
+    const zonesSet = new Set(); let casosService = 0; let casosInst = 0;
+    const citasContadas = new Set();
+    casos.forEach(c => {
+      if (c.zonaTecnicaHFC) zonesSet.add(c.zonaTecnicaHFC);
+      if (c.zonaTecnicaFTTH) zonesSet.add(c.zonaTecnicaFTTH);
+      if (!c.numeroCita || !citasContadas.has(c.numeroCita)) {
+        if (c.numeroCita) citasContadas.add(c.numeroCita);
+        const t = (c.tipoTrabajo||'').toUpperCase();
+        if (t.includes('SERVICE')) casosService++;
+        if (t.includes('INSTALACION')) casosInst++;
+      }
+    });
+    const totalOTsDia = citasPorDia[fecha].size || casos.length;
+    result.resumenDiario.push({
+      fecha,
+      totalOTs: totalOTsDia,
+      zonasAfectadas: zonesSet.size,
+      casosService,
+      casosInstalacion: casosInst
+    });
+  });
+  result.resumenDiario.sort((a,b)=> (parseDate(a.fecha) - parseDate(b.fecha)));
+
+  // ---- Dispositivos (igual que lo tenías)
+  const dispositivosMap = {};
+  const citasAnalizadas = new Set();
+  rows.forEach(r => {
+    if (r.numeroCita && citasAnalizadas.has(r.numeroCita)) return;
+    if (r.numeroCita) citasAnalizadas.add(r.numeroCita);
+
+    const devices = parseDeviceInfo(r.infoDispositivos);
+    devices.forEach(dev => {
+      const key = (dev.type||'')+'_'+(dev.serial||'')+'_'+(dev.mac||'');
+      if (!dispositivosMap[key]) {
+        const zona = (r.zonaTecnicaHFC || r.zonaTecnicaFTTH || '').toUpperCase();
+        let estadoSalud = 'S/C';
+        if (useHealth && healthByZone.size && dev.mac) {
+          const mapaZ = healthByZone.get(zona);
+          if (mapaZ) {
+            const entry = mapaZ.get(normMac(dev.mac));
+            if (entry) estadoSalud = (entry.estado === 1) ? 'UP' : 'DOWN';
+          }
+        }
+        dispositivosMap[key] = {
+          tipo: dev.type || '',
+          modelo: dev.model || '',
+          serial: dev.serial || '',
+          mac: dev.mac || '',
+          marca: dev.category || '',
+          zona: zona || '',
+          estadoSalud,
+          apariciones: []
+        };
+      }
+      dispositivosMap[key].apariciones.push({
+        zona: r.zonaTecnicaHFC || r.zonaTecnicaFTTH || '',
+        direccion: r.calle,
+        fecha: r.fechaCreacion,
+        ot: r.numeroCita || 'Sin OT'
+      });
+    });
+  });
+  Object.values(dispositivosMap).forEach(d => {
+    if ((d.mac && d.mac.trim()) || d.apariciones.length > 1) result.dispositivos.push(d);
+  });
+  result.dispositivos.sort((a,b)=> b.apariciones.length - a.apariciones.length);
+
+  // ---- Stats
+  const totalCitasUnicas = new Set(rows.map(r=>r.numeroCita).filter(Boolean)).size;
+  result.stats = {
+    totalOTs: totalCitasUnicas || rows.length,
+    totalZonas: result.zonas.length,
+    dispositivosProblematicos: result.dispositivos.length,
+    diasAnalizados: result.resumenDiario.length
+  };
+
+  return result;
+}
+</script>
 
 // ordenar zonas: primero N/N-1, luego volumen
 result.zonas.sort((a,b) =>
