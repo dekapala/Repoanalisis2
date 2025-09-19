@@ -182,12 +182,11 @@ body.modal-open { overflow: hidden; }
     <div id="alertSection"></div>
     <div id="statsSection" class="stats-grid hidden"></div>
 
-   <div class="tabs hidden" id="tabsSection">
+<div class="tabs hidden" id="tabsSection">
   <button class="tab active" data-tab="edificios">🏢 Edificios</button>
   <button class="tab" data-tab="zonas">📍 Zonas</button>
-  <button class="tab" data-tab="resumen">📊 Resumen</button>
+  <button class="tab" data-tab="diagnosticos">⚡ Diagnósticos</button>
   <button class="tab" data-tab="dispositivos">📱 Dispositivos</button>
-  <button class="tab" data-tab="patrones">🕒 Patrones</button>
 </div>
 
 
@@ -233,6 +232,41 @@ body.modal-open { overflow: hidden; }
     let DAYS_WINDOW = 3;              // Ventana N..N-(k-1)
     const HORIZON_K = 7;              // Horizonte para sparkline
     const DAY_MS = 86400000;
+/* ========= DIAGNÓSTICOS (clasificación) ========= */
+const DIAGNOSTIC_CATEGORIES = {
+  EQUIPMENT_DAMAGE: {
+    keywords: ['dañado', 'quemado', 'falla fuente', 'no enciende', 'cortocircuito', 'sobretension', 'sobre tensión', 'sobre-tensión'],
+    severity: 'CRÍTICO',
+    color: '#dc2626',
+    icon: '⚡'
+  },
+  SIGNAL_ISSUES: {
+    keywords: ['sin señal', 'no recibe señal', 'baja señal', 'intermitente', 'microcorte', 'micro-corte'],
+    severity: 'ALTO',
+    color: '#ea580c',
+    icon: '📡'
+  },
+  CONNECTIVITY: {
+    keywords: ['inconveniente de interface wifi', 'no navega', 'lento', 'desconecta', 'sin internet'],
+    severity: 'MEDIO',
+    color: '#ca8a04',
+    icon: '🌐'
+  },
+  INSTALLATION: {
+    keywords: ['instalacion', 'configuracion', 'activacion'],
+    severity: 'BAJO',
+    color: '#16a34a',
+    icon: '🔧'
+  }
+};
+
+function categorizeDiagnostic(diagnostic) {
+  const diagLower = (diagnostic || '').toLowerCase();
+  for (const [category, cfg] of Object.entries(DIAGNOSTIC_CATEGORIES)) {
+    if (cfg.keywords.some(k => diagLower.includes(k))) return { category, ...cfg };
+  }
+  return { category: 'OTHER', severity: 'BAJO', color: '#6b7280', icon: '❓' };
+}
 
     // Salud
     let healthByZone = new Map();     // Map<ZONA, Map<MAC, {estado:0|1, ts?:number}>>
@@ -663,20 +697,66 @@ const fechaStr = toStrDateTime(
         const nivelRiesgo  = (ingresoN >= 3 || ingresoN1 >= 3) ? 'CRÍTICO' : (maxOTsEnUnDia >= 3 ? 'ALTO' : 'MEDIO');
 
         const nodo = nodesByZone.get(String(zona).toUpperCase()) || { up: 0, down: 0 };
+/* === Diagnósticos por zona (conteo y riesgo) === */
+{
+  const casos = zoneGroups[zona] || [];
+  const diagnosticMap = new Map();          // category -> {count, cases[], color, icon, severity}
+  const dailyDiagnostics = new Map();       // dayEpoch -> Map(category -> count)
 
-        result.zonas.push({
-          zona,
-          totalOTs,
-          diasConCasos,
-          ingresoN,
-          ingresoN1,
-          maxOTsEnUnDia,
-          nivelRiesgo,
-          territorio: casos[0].territorio || '',
-          cmsUp: Number(nodo.up || 0),
-          cmsDown: Number(nodo.down || 0)
-        });
-      });
+  casos.forEach(c => {
+    const diag = c.diagnosticoTecnico || 'Sin diagnóstico';
+    const cat = categorizeDiagnostic(diag);
+
+    // total por categoría
+    if (!diagnosticMap.has(cat.category)) diagnosticMap.set(cat.category, { count:0, cases:[], ...cat });
+    const entry = diagnosticMap.get(cat.category);
+    entry.count++; entry.cases.push(c);
+
+    // diario por categoría
+    const dt = parseDate(c.fechaCreacion);
+    const dayKey = dt ? toDayKey(dt) : null;
+    if (dayKey!=null){
+      if (!dailyDiagnostics.has(dayKey)) dailyDiagnostics.set(dayKey, new Map());
+      const m = dailyDiagnostics.get(dayKey);
+      m.set(cat.category, (m.get(cat.category)||0) + 1);
+    }
+  });
+
+  // métricas
+  const equipmentDamage = diagnosticMap.get('EQUIPMENT_DAMAGE')?.count || 0;
+  const totalCasos = casos.length || 0;
+  const damageRate = totalCasos ? ((equipmentDamage / totalCasos) * 100) : 0;
+  const climaticRisk = damageRate > 30 ? 'ALTO' : damageRate > 15 ? 'MEDIO' : 'BAJO';
+
+  // mutar la zona recién agregada
+  const Z = result.zonas[result.zonas.length-1];
+  Z.diagnosticos = Array.from(diagnosticMap.values());
+  Z.equipmentDamage = equipmentDamage;
+  Z.damageRate = Number(damageRate.toFixed(1));
+  Z.climaticRisk = climaticRisk;
+  Z.dailyDiagnostics = dailyDiagnostics;
+}
+
+       result.zonas.push({
+  zona,
+  totalOTs,
+  diasConCasos,
+  ingresoN,
+  ingresoN1,
+  maxOTsEnUnDia,
+  nivelRiesgo,
+  territorio: casos[0].territorio || '',
+  cmsUp: Number(nodo.up || 0),
+  cmsDown: Number(nodo.down || 0),
+
+  // >>> NUEVO <<<
+  diagnosticos: Array.from(diagMap.values()),
+  equipmentDamage,
+  damageRate: Number(damageRate.toFixed(1)),
+  climaticRisk,
+  dailyDiagnostics: dailyDiag
+});
+
 
       // ordenar zonas: primero N/N-1, luego volumen
       result.zonas.sort((a,b) =>
@@ -954,16 +1034,16 @@ const fechaStr = toStrDateTime(
       cont.classList.remove('hidden');
     }
 
-    function displayData(tab) {
-      if (!processedData) return;
-      let html = '';
-      if (tab === 'edificios') html = displayEdificios();
-      else if (tab === 'zonas') html = displayZonas(processedData.zonas);
-      else if (tab === 'resumen') html = displayResumen(processedData.resumenDiario);
-      else if (tab === 'dispositivos') html = displayDispositivos(processedData.dispositivos);
-      else if (tab === 'patrones') html = renderWeekHourHeatmap(currentFilteredRows || []);
-      document.getElementById('previewSection').innerHTML = html;
-    }
+  function displayData(tab) {
+  if (!processedData) return;
+  let html = '';
+  if (tab === 'edificios') html = displayEdificios();
+  else if (tab === 'zonas') html = displayZonas(processedData.zonas);
+  else if (tab === 'diagnosticos') html = displayDiagnosticos(processedData.zonas);
+  else if (tab === 'dispositivos') html = displayDispositivos(processedData.dispositivos);
+  document.getElementById('previewSection').innerHTML = html;
+}
+
 
     /* ========= HELPERS DE RENDER ========= */
     function showLoading(txt){
@@ -1170,56 +1250,60 @@ function renderWeekHourHeatmap(rows){
     }
 
     // ===== Render: Zonas =====
-    function displayZonas(zonas) {
-      if (!zonas.length) return '<div class="loading"><p>No se encontraron zonas</p></div>';
+  function displayZonas(zonas) {
+  if (!zonas.length) return '<div class="loading"><p>No se encontraron zonas</p></div>';
+  const q = (document.getElementById('quickSearch')?.value || '').trim().toLowerCase();
+  const arr = q ? zonas.filter(z => (z.zona||'').toLowerCase().includes(q)) : zonas;
 
-      const q = (document.getElementById('quickSearch')?.value || '').trim().toLowerCase();
-      const arr = q ? zonas.filter(z => (z.zona||'').toLowerCase().includes(q)) : zonas;
+  const head = `
+    <thead>
+      <tr>
+        <th>Zona</th>
+        <th>Total OTs</th>
+        <th>Ingreso N</th>
+        <th>Ingreso N-1</th>
+        <th>Criticidad</th>
+        <th>Equipos dañados</th>
+        <th>% daño</th>
+        <th>Riesgo climático</th>
+        <th>Territorio</th>
+        <th>CMS UP</th>
+        <th>CMS DOWN</th>
+        <th>Acción</th>
+      </tr>
+    </thead>`;
 
-      const head = `
-        <thead>
-          <tr>
-            <th>Zona</th>
-            <th>Total OTs</th>
-            <th>Días con OTs</th>
-            <th>Ingreso N</th>
-            <th>Ingreso N-1</th>
-            <th>Máx en un día</th>
-            <th>Criticidad</th>
-            <th>Territorio</th>
-            <th>CMS UP</th>
-            <th>CMS DOWN</th>
-            <th>Acción</th>
-          </tr>
-        </thead>`;
+  const rows = arr.map(z => {
+    const down = Number(z.cmsDown||0);
+    const rowClass = (z.nivelRiesgo === 'CRÍTICO' && down>0) ? ' class="row-critical-down"' : '';
+    const riskBadge = z.climaticRisk === 'ALTO'
+      ? '<span class="priority-badge priority-critica">ALTO</span>'
+      : z.climaticRisk === 'MEDIO'
+        ? '<span class="priority-badge priority-alta">MEDIO</span>'
+        : '<span class="priority-badge priority-baja">BAJO</span>';
 
-      const rows = arr.map(z => {
-        const down = Number(z.cmsDown||0);
-        const rowClass = (z.nivelRiesgo === 'CRÍTICO' && down>0) ? ' class="row-critical-down"' : '';
-        return `
-          <tr${rowClass}>
-            <td><strong>${z.zona}</strong></td>
-            <td>${z.totalOTs}</td>
-            <td>${z.diasConCasos}</td>
-            <td>${z.ingresoN} ${deltaBadge(z.ingresoN, z.ingresoN1)}</td>
-<td>${z.ingresoN1}</td>
-            <td>${z.maxOTsEnUnDia}</td>
-            <td><span class="priority-badge ${z.nivelRiesgo==='CRÍTICO'?'priority-critica':z.nivelRiesgo==='ALTO'?'priority-alta':'priority-media'}">${z.nivelRiesgo}</span></td>
-            <td>${z.territorio || '-'}</td>
-            <td>${Number(z.cmsUp||0)}</td>
-            <td>${Number(z.cmsDown||0)}</td>
-            <td>
-              <button class="btn" onclick="openZoneModal('${z.zona.replace(/'/g,"&#39;")}')">🔎 Ver</button>
-            </td>
-          </tr>`;
-      }).join('');
+    return `
+      <tr${rowClass}>
+        <td><strong>${z.zona}</strong></td>
+        <td>${z.totalOTs}</td>
+        <td>${z.ingresoN} ${deltaBadge(z.ingresoN, z.ingresoN1)}</td>
+        <td>${z.ingresoN1}</td>
+        <td><span class="priority-badge ${z.nivelRiesgo==='CRÍTICO'?'priority-critica':z.nivelRiesgo==='ALTO'?'priority-alta':'priority-media'}">${z.nivelRiesgo}</span></td>
+        <td><strong style="color:#dc2626;">${z.equipmentDamage||0}</strong></td>
+        <td>${z.damageRate||0}%</td>
+        <td>${riskBadge}</td>
+        <td>${z.territorio || '-'}</td>
+        <td>${Number(z.cmsUp||0)}</td>
+        <td>${Number(z.cmsDown||0)}</td>
+        <td><button class="btn" onclick="openZoneModal('${z.zona.replace(/'/g,"&#39;")}')">🔎 Ver</button></td>
+      </tr>`;
+  }).join('');
 
-      return `
-        <div class="preview-title">📍 Análisis de Zonas</div>
-        <div class="table-container">
-          <table>${head}<tbody>${rows}</tbody></table>
-        </div>`;
-    }
+  return `
+    <div class="preview-title">📍 Análisis de Zonas</div>
+    <div class="table-container"><table>${head}<tbody>${rows}</tbody></table></div>`;
+}
+
     /* === Series por día/hora para minigráficos del modal (FIX orden N..N-6) === */
 function zoneBuildTimeSeries(zoneRows) {
   // dayCounts: index 0 = N-6 ... index 6 = N (hoy)
@@ -1250,6 +1334,98 @@ function zoneBuildTimeSeries(zoneRows) {
   });
 
   return { dayCounts, hourCounts };
+}
+function buildDamageTrendChart(dailyDiagnostics) {
+  if (!dailyDiagnostics || dailyDiagnostics.size === 0) return '<span style="color:#9ca3af;">Sin datos</span>';
+  const today = toDayKey(new Date());
+  const damageCounts = [];
+  for (let i = 6; i >= 0; i--) {
+    const dayKey = today - (i * DAY_MS);
+    const m = dailyDiagnostics.get(dayKey);
+    const c = m ? (m.get('EQUIPMENT_DAMAGE') || 0) : 0;
+    damageCounts.push(c);
+  }
+  const maxDamage = Math.max(1, ...damageCounts);
+  const bars = damageCounts.map(count => {
+    const h = Math.max(3, (count / maxDamage) * 20);
+    const color = count > 3 ? '#dc2626' : count > 1 ? '#ea580c' : '#9ca3af';
+    return `<div style="width:8px;height:${h}px;background:${color};margin:0 1px;" title="${count} equipos dañados"></div>`;
+  }).join('');
+  return `<div style="display:flex;align-items:flex-end;height:24px;">${bars}</div>`;
+}
+
+function displayDiagnosticos(zonas) {
+  if (!zonas.length) return '<div class="loading"><p>No se encontraron datos de diagnósticos</p></div>';
+  const q = (document.getElementById('quickSearch')?.value || '').trim().toLowerCase();
+  const arr = q ? zonas.filter(z => (z.zona||'').toLowerCase().includes(q)) : zonas;
+
+  const sortedZonas = arr.slice().sort((a,b) =>
+    (b.equipmentDamage||0) - (a.equipmentDamage||0) ||
+    (parseFloat(b.damageRate||0) - parseFloat(a.damageRate||0))
+  );
+
+  const head = `
+    <thead>
+      <tr>
+        <th>Zona</th>
+        <th>Total OTs</th>
+        <th>Equipos dañados</th>
+        <th>% daño</th>
+        <th>Riesgo climático</th>
+        <th>Distribución diagnósticos</th>
+        <th>Tendencia 7 días</th>
+        <th>Acción</th>
+      </tr>
+    </thead>`;
+
+  const rows = sortedZonas.map(z => {
+    const diags = z.diagnosticos || [];
+    const maxCount = Math.max(1, ...diags.map(d => d.count||0));
+    const diagChart = diags.slice(0,4).map(d => {
+      const w = Math.max(8, (d.count / maxCount) * 60);
+      return `<div style="display:flex;align-items:center;gap:4px;margin:2px 0;">
+        <span style="font-size:10px;">${d.icon}</span>
+        <div style="width:${w}px;height:12px;background:${d.color};border-radius:2px;" title="${d.category}: ${d.count}"></div>
+        <span style="font-size:10px;color:#6b7280;">${d.count}</span>
+      </div>`;
+    }).join('');
+
+    const trend = buildDamageTrendChart(z.dailyDiagnostics);
+    const riskBadge = z.climaticRisk === 'ALTO'
+      ? '<span class="priority-badge priority-critica">ALTO RIESGO</span>'
+      : z.climaticRisk === 'MEDIO'
+        ? '<span class="priority-badge priority-alta">RIESGO MEDIO</span>'
+        : '<span class="priority-badge priority-baja">RIESGO BAJO</span>';
+
+    const rowClass = (z.climaticRisk === 'ALTO' && (z.equipmentDamage||0) > 5) ? ' class="row-critical-down"' : '';
+    return `
+      <tr${rowClass}>
+        <td><strong>${z.zona}</strong></td>
+        <td>${z.totalOTs}</td>
+        <td><strong style="color:#dc2626;">${z.equipmentDamage||0}</strong></td>
+        <td><strong>${z.damageRate||0}%</strong></td>
+        <td>${riskBadge}</td>
+        <td><div style="min-width:120px;">${diagChart}</div></td>
+        <td><div style="min-width:100px;">${trend}</div></td>
+        <td><button class="btn" onclick="openZoneModal('${z.zona.replace(/'/g,"&#39;")}')">🔍 Detalles</button></td>
+      </tr>`;
+  }).join('');
+
+  const totalEquipDamage = sortedZonas.reduce((s,z)=>s+(z.equipmentDamage||0),0);
+  const zonesAtRisk = sortedZonas.filter(z => z.climaticRisk === 'ALTO').length;
+
+  const summary = `
+    <div style="background:#fee2e2;border-left:4px solid #dc2626;padding:12px;margin:12px 0;border-radius:8px;">
+      <strong>⚡ Resumen de riesgo climático/eléctrico</strong><br>
+      • Total equipos dañados: <strong>${totalEquipDamage}</strong><br>
+      • Zonas en alto riesgo: <strong>${zonesAtRisk}</strong><br>
+      • Recomendación: ${zonesAtRisk>0 ? 'Revisar infraestructura eléctrica en zonas críticas' : 'Situación estable'}
+    </div>`;
+
+  return `
+    <div class="preview-title">⚡ Análisis de Diagnósticos por Zona</div>
+    ${summary}
+    <div class="table-container"><table>${head}<tbody>${rows}</tbody></table></div>`;
 }
 
 function zoneMiniChartsHTML(zoneRows) {
@@ -1317,6 +1493,13 @@ let html = `
       <input type="checkbox" id="chkAllZone" onchange="toggleAllZoneChecks(this)">
       <span>Seleccionar todo</span>
     </label>
+  </div>
+`;
+  const diagnosticAnalysis = analyzeDiagnosticsForZone(zoneData);
+html += `
+  <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:10px;margin:8px 0;border-radius:8px;">
+    <strong>📊 Análisis de Diagnósticos:</strong><br>
+    ${diagnosticAnalysis}
   </div>
 `;
 html += zoneMiniChartsHTML(zoneData);
