@@ -1195,6 +1195,20 @@ function renderWeekHourHeatmap(rows){
   for(let h=0; h<24; h++){
     html += `<th style="background:linear-gradient(135deg, var(--grad1) 0%, var(--grad2) 100%);color:#fff;padding:6px 8px;font-size:12px;">${String(h).padStart(2,'0')}</th>`;
   }
+    <script>
+function renderWeekBars(weekCounts) {
+  const order = [1,2,3,4,5,6,0]; // Lun..Dom
+  const labels = ['L','M','X','J','V','S','D'];
+  const data = order.map(i => Number(weekCounts?.[i] || 0));
+  const max = Math.max(1, ...data);
+  const bars = data.map((c, idx) => {
+    const h = Math.max(3, Math.round((c / max) * 30));
+    return `<div title="${labels[idx]}: ${c}" style="width:10px;height:${h}px;background:#6366f1;border-radius:2px;"></div>`;
+  }).join('');
+  return `<div style="display:flex;align-items:flex-end;gap:4px;height:36px;">${bars}</div>`;
+}
+</script>
+
   html += '</tr></thead><tbody>';
 
   M.forEach((row,i)=>{
@@ -1356,7 +1370,8 @@ function renderWeekHourHeatmap(rows){
     }
 
     // ===== Render: Zonas =====
-  function displayZonas(zonas) {
+  <script>
+function displayZonas(zonas) {
   if (!zonas.length) return '<div class="loading"><p>No se encontraron zonas</p></div>';
   const q = (document.getElementById('quickSearch')?.value || '').trim().toLowerCase();
   const arr = q ? zonas.filter(z => (z.zona||'').toLowerCase().includes(q)) : zonas;
@@ -1368,10 +1383,8 @@ function renderWeekHourHeatmap(rows){
         <th>Total OTs</th>
         <th>Ingreso N</th>
         <th>Ingreso N-1</th>
-        <th>Criticidad</th>
-        <th>Equipos dañados</th>
-        <th>% daño</th>
-        <th>Riesgo climático</th>
+        <th>% CATEC</th>
+        <th>Ingresos 7d (L..D)</th>
         <th>Territorio</th>
         <th>CMS UP</th>
         <th>CMS DOWN</th>
@@ -1380,24 +1393,15 @@ function renderWeekHourHeatmap(rows){
     </thead>`;
 
   const rows = arr.map(z => {
-    const down = Number(z.cmsDown||0);
-    const rowClass = (z.nivelRiesgo === 'CRÍTICO' && down>0) ? ' class="row-critical-down"' : '';
-    const riskBadge = z.climaticRisk === 'ALTO'
-      ? '<span class="priority-badge priority-critica">ALTO</span>'
-      : z.climaticRisk === 'MEDIO'
-        ? '<span class="priority-badge priority-alta">MEDIO</span>'
-        : '<span class="priority-badge priority-baja">BAJO</span>';
-
+    const rowClass = (z.nivelRiesgo === 'CRÍTICO' && Number(z.cmsDown||0)>0) ? ' class="row-critical-down"' : '';
     return `
       <tr${rowClass}>
         <td><strong>${z.zona}</strong></td>
         <td>${z.totalOTs}</td>
         <td>${z.ingresoN} ${deltaBadge(z.ingresoN, z.ingresoN1)}</td>
         <td>${z.ingresoN1}</td>
-        <td><span class="priority-badge ${z.nivelRiesgo==='CRÍTICO'?'priority-critica':z.nivelRiesgo==='ALTO'?'priority-alta':'priority-media'}">${z.nivelRiesgo}</span></td>
-        <td><strong style="color:#dc2626;">${z.equipmentDamage||0}</strong></td>
-        <td>${z.damageRate||0}%</td>
-        <td>${riskBadge}</td>
+        <td><strong>${(z.catecRate||0)}%</strong> <span class="pill">${z.catecCount||0} CATEC</span></td>
+        <td>${renderWeekBars(z.weekCounts||[])}</td>
         <td>${z.territorio || '-'}</td>
         <td>${Number(z.cmsUp||0)}</td>
         <td>${Number(z.cmsDown||0)}</td>
@@ -1409,6 +1413,8 @@ function renderWeekHourHeatmap(rows){
     <div class="preview-title">📍 Análisis de Zonas</div>
     <div class="table-container"><table>${head}<tbody>${rows}</tbody></table></div>`;
 }
+</script>
+
 
     /* === Series por día/hora para minigráficos del modal (FIX orden N..N-6) === */
 function zoneBuildTimeSeries(zoneRows) {
@@ -1513,46 +1519,24 @@ function displayDiagnosticos(zonas) {
 }
 
 
-function zoneMiniChartsHTML(zoneRows) {
-  const { dayCounts, hourCounts } = zoneBuildTimeSeries(zoneRows);
-
-  // etiquetas para los 7 días (izq->der): N-6 ... N-2, Ayer, Hoy
-  const dayLabels = ['N-6','N-5','N-4','N-3','N-2','Ayer','Hoy'];
-
-  const maxDay  = Math.max(1, ...dayCounts);
-  const maxHour = Math.max(1, ...hourCounts);
-
-  const dayBars = dayCounts.map((v, i) => {
-    const h = Math.max(3, Math.round((v / maxDay) * 40)); // alto 40px
-    return `<div title="${dayLabels[i]}: ${v} OTs" style="height:${h}px;width:12px;background:#6366f1;border-radius:3px;"></div>`;
-  }).join('');
-
-  const hourBars = hourCounts.map((v, i) => {
-    const h = Math.max(2, Math.round((v / maxHour) * 36)); // alto 36px
-    const label = String(i).padStart(2,'0') + 'h: ' + v + ' OTs';
-    return `<div title="${label}" style="height:${h}px;width:8px;background:#c7d2fe;border-radius:2px;"></div>`;
-  }).join('');
-
-  const dayAxis = dayLabels.map(l => `<span style="width:12px;text-align:center;font-size:10px;color:#9ca3af;">${l}</span>`).join('');
-  const hourAxis = ['00h','06h','12h','18h','23h'];
-  const hourAxisHtml = hourAxis.map(l => `<span style="flex:1;text-align:center;font-size:10px;color:#9ca3af;">${l}</span>`).join('');
-
-  return `
-    <div style="margin:4px 0 12px 0; display:grid; gap:10px;">
-      <div>
-        <div style="font-weight:800;font-size:12px;margin-bottom:6px;color:#111827;">OTs por día (últimos 7)</div>
-        <div style="display:flex;align-items:flex-end;gap:6px;height:46px;">${dayBars}</div>
-        <div style="display:flex;gap:6px;margin-top:4px;">${dayAxis}</div>
-      </div>
-
-      <div>
-        <div style="font-weight:800;font-size:12px;margin-bottom:6px;color:#111827;">OTs por hora (acumulado ventana)</div>
-        <div style="display:flex;align-items:flex-end;gap:3px;height:40px;">${hourBars}</div>
-        <div style="display:flex;justify-content:space-between;margin-top:4px;">${hourAxisHtml}</div>
-      </div>
-    </div>
-  `;
+<script>
+function analyzeDiagnosticsForZone(rows) {
+  if (!rows || !rows.length) return 'Sin datos.';
+  const counts = new Map();
+  rows.forEach(r => {
+    const cat = categorizeDiagnostic(r.diagnosticoTecnico || '').category;
+    counts.set(cat, (counts.get(cat)||0) + 1);
+  });
+  const total = rows.length;
+  const top = Array.from(counts.entries()).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  const catec = rows.reduce((s,r)=> s + (((r.tipoTrabajo||'').toUpperCase().includes('CATEC'))?1:0), 0);
+  const catecPct = Math.round((catec/total)*100);
+  const parts = top.map(([cat,c]) => `${cat}: <strong>${c}</strong> (${Math.round(c*100/total)}%)`);
+  parts.push(`% CATEC: <strong>${catecPct}%</strong> (${catec} de ${total})`);
+  return parts.join(' • ');
 }
+</script>
+
 // ===== Modal de Zona =====
    // ===== Modal de Zona (con minigráficos y toolbar) =====
 function openZoneModal(zona) {
