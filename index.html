@@ -372,53 +372,156 @@ body.modal-open { overflow: hidden; }
       }
     }
 
-    function extractRowsFromWorkbook(workbook) {
-      const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
-      if (!sheet) return [];
-      const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false, dateNF: 'DD/MM/YYYY' });
+  function extractRowsFromWorkbook(workbook) {
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  if (!sheet) return [];
 
-      // buscar fila header
-      let headerRow = -1;
-      for (let i=0; i<Math.min(30, jsonData.length); i++) {
-        const row = jsonData[i] || [];
-        const rowStr = row.join(' ').toLowerCase();
-        if (rowStr.includes('fecha') && rowStr.includes('zona') && (rowStr.includes('caso') || rowStr.includes('calle'))) { headerRow = i; break; }
-      }
-      if (headerRow === -1) return [];
+  // Traigo todo como matriz (sin forzar formato) para poder leer header y valores crudos.
+  const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true });
 
-      const rows = [];
-      const citas = new Set();
-      for (let i = headerRow + 1; i < jsonData.length; i++) {
-        const r = jsonData[i]; if (!r || r.length < 10) continue;
-        let fechaCreacion = r[0] || r[1]; if (!fechaCreacion) continue;
-        const rowData = {
-          fechaCreacion: String(fechaCreacion),
-          zonaTecnicaHFC: r[3] || '',
-          calle: r[4] || '',
-          telefono: r[5] || '',
-          numeroCaso: r[6] || '',
-          numeroOrden: r[7] || '',
-          externalCaseId: r[8] || '',  // eco
-          diagnosticoTecnico: r[9] || '',
-          numeroCita: r[10] || '',
-          zonaTecnicaFTTH: r[11] || '',
-          globalIdExtTkt: r[12] || '',
-          tipoTrabajo: r[13] || '',
-          estado1: r[14] || '',
-          estado2: r[15] || '',
-          estado3: r[16] || '',
-          territorio: r[17] || '',
-          infoDispositivos: r[18] || ''
-        };
-        if (rowData.numeroCita) {
-          if (!citas.has(rowData.numeroCita)) { citas.add(rowData.numeroCita); rows.push(rowData); }
-        } else if (rowData.calle && (rowData.zonaTecnicaHFC || rowData.zonaTecnicaFTTH)) {
-          rows.push(rowData);
-        }
-      }
-      return rows;
+  // Buscar fila de encabezados (primer fila que contenga 'fecha' y 'zona' y 'caso' o 'calle')
+  let headerRow = -1;
+  for (let i = 0; i < Math.min(30, jsonData.length); i++) {
+    const row = jsonData[i] || [];
+    const rowStr = row.join(' ').toLowerCase();
+    if (rowStr.includes('fecha') && rowStr.includes('zona') && (rowStr.includes('caso') || rowStr.includes('calle'))) {
+      headerRow = i; break;
     }
+  }
+  if (headerRow === -1) return [];
+
+  const headers = (jsonData[headerRow] || []).map(h => String(h || '').trim().toLowerCase());
+
+  // helper para buscar índice por posibles nombres
+  const findCol = (cands) => {
+    for (const c of cands) {
+      let idx = headers.findIndex(h => h === c);
+      if (idx !== -1) return idx;
+      idx = headers.findIndex(h => h.includes(c)); // tolerante
+      if (idx !== -1) return idx;
+    }
+    return -1;
+  };
+
+  // Posibles nombres de columnas
+  const cFecha   = findCol(['fecha creación', 'fecha creacion', 'fecha y hora', 'fecha hora', 'fecha', 'fecha alta']);
+  const cHora    = findCol(['hora', 'hora creación', 'hora creacion']); // opcional si viene separada
+  const cZonaHFC = findCol(['zona tecnica hfc', 'zona hfc', 'zona hfc/cmts', 'zona hfc/nodo', 'zona']);
+  const cCalle   = findCol(['calle', 'direccion', 'dirección']);
+  const cTel     = findCol(['telefono', 'teléfono']);
+  const cCaso    = findCol(['numero de caso', 'nro caso', 'caso', 'id caso']);
+  const cOrden   = findCol(['numero de orden', 'nro orden', 'orden']);
+  const cEco     = findCol(['externalcaseid', 'eco', 'external case id']);
+  const cDiag    = findCol(['diagnostico tecnico', 'diagnóstico técnico', 'diagnostico', 'diagnóstico']);
+  const cCita    = findCol(['numero de cita', 'nro cita', 'cita', 'ot', 'sa']);
+  const cZonaFT  = findCol(['zona tecnica ftth', 'zona ftth']);
+  const cGlobal  = findCol(['globalidexttkt', 'global id ext tkt', 'global id']);
+  const cTrabajo = findCol(['tipo de trabajo', 'tipo trabajo', 'trabajo']);
+  const cEstado1 = findCol(['estado', 'estado 1', 'estado1']);
+  const cEstado2 = findCol(['estado 2', 'estado2']);
+  const cEstado3 = findCol(['estado 3', 'estado3']);
+  const cTerr    = findCol(['territorio', 'region', 'región']);
+  const cInfoDev = findCol(['info dispositivos', 'dispositivos', 'equipos', 'deviceinfo', 'info equipos']);
+
+  const rows = [];
+  const citas = new Set();
+
+  // formateador robusto para fecha/hora
+  const fmt2 = (n) => String(n).padStart(2,'0');
+  const toStrDateTime = (valFecha, valHora) => {
+    // Si viene como número (serial de Excel) o Date, convertir a "DD/MM/YYYY HH:mm"
+    const fromAny = (v) => {
+      if (v instanceof Date) return v;
+      if (typeof v === 'number') return XLSX.SSF.parse_date_code(v) 
+        ? new Date(Date.UTC(
+            XLSX.SSF.parse_date_code(v).y,
+            (XLSX.SSF.parse_date_code(v).m - 1),
+            XLSX.SSF.parse_date_code(v).d,
+            XLSX.SSF.parse_date_code(v).H || 0,
+            XLSX.SSF.parse_date_code(v).M || 0,
+            XLSX.SSF.parse_date_code(v).S || 0
+          ))
+        : null;
+      // string: intento split
+      const s = String(v).trim();
+      if (!s) return null;
+      // si ya trae hora, lo devuelvo como está
+      if (/\d{1,2}\/\d{1,2}\/\d{2,4}\s+\d{1,2}:\d{2}/.test(s)) return s;
+      // si es solo fecha (dd/mm/yyyy)
+      const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+      if (m) return new Date(Number(m[3].length===2?'20'+m[3]:m[3]), Number(m[2])-1, Number(m[1]));
+      return s; // lo dejo como string por si ya viene formateado distinto
+    };
+
+    let d = fromAny(valFecha);
+    // Combinar con hora separada si existe
+    let hh = 0, mm = 0;
+    if (valHora != null && valHora !== '') {
+      if (valHora instanceof Date) { hh = valHora.getHours(); mm = valHora.getMinutes(); }
+      else if (typeof valHora === 'number') {
+        const frac = valHora - Math.floor(valHora);
+        const totalMin = Math.round(frac * 24 * 60);
+        hh = Math.floor(totalMin/60); mm = totalMin%60;
+      } else {
+        const hm = String(valHora).trim().match(/(\d{1,2}):(\d{2})/);
+        if (hm) { hh = Number(hm[1]); mm = Number(hm[2]); }
+      }
+    }
+
+    if (d instanceof Date && !isNaN(d.getTime())) {
+      return `${fmt2(d.getDate())}/${fmt2(d.getMonth()+1)}/${d.getFullYear()} ${fmt2(hh)}:${fmt2(mm)}`;
+    }
+    // si d ya es string con hora, lo uso tal cual
+    if (typeof d === 'string') {
+      if (valHora && !/\d{1,2}:\d{2}/.test(d)) {
+        return `${d} ${fmt2(hh)}:${fmt2(mm)}`;
+      }
+      return d;
+    }
+    return ''; // no pude interpretar
+  };
+
+  for (let i = headerRow + 1; i < jsonData.length; i++) {
+    const r = jsonData[i] || [];
+
+    // Fecha + (opcional) Hora
+    const fechaStr = toStrDateTime(
+      cFecha !== -1 ? r[cFecha] : (r[0] || ''),
+      cHora  !== -1 ? r[cHora]  : ''
+    );
+    if (!fechaStr) continue;
+
+    const rowData = {
+      fechaCreacion: String(fechaStr),
+      zonaTecnicaHFC: cZonaHFC !== -1 ? (r[cZonaHFC] || '') : '',
+      calle:          cCalle   !== -1 ? (r[cCalle]   || '') : '',
+      telefono:       cTel     !== -1 ? (r[cTel]     || '') : '',
+      numeroCaso:     cCaso    !== -1 ? (r[cCaso]    || '') : '',
+      numeroOrden:    cOrden   !== -1 ? (r[cOrden]   || '') : '',
+      externalCaseId: cEco     !== -1 ? (r[cEco]     || '') : '',
+      diagnosticoTecnico: cDiag !== -1 ? (r[cDiag]   || '') : '',
+      numeroCita:     cCita    !== -1 ? (r[cCita]    || '') : '',
+      zonaTecnicaFTTH:cZonaFT  !== -1 ? (r[cZonaFT]  || '') : '',
+      globalIdExtTkt: cGlobal  !== -1 ? (r[cGlobal]  || '') : '',
+      tipoTrabajo:    cTrabajo !== -1 ? (r[cTrabajo] || '') : '',
+      estado1:        cEstado1 !== -1 ? (r[cEstado1] || '') : '',
+      estado2:        cEstado2 !== -1 ? (r[cEstado2] || '') : '',
+      estado3:        cEstado3 !== -1 ? (r[cEstado3] || '') : '',
+      territorio:     cTerr    !== -1 ? (r[cTerr]    || '') : '',
+      infoDispositivos: cInfoDev !== -1 ? (r[cInfoDev] || '') : ''
+    };
+
+    // Dedupe por OT si existe; si no, guardo por dirección+fecha
+    if (rowData.numeroCita) {
+      if (!citas.has(rowData.numeroCita)) { citas.add(rowData.numeroCita); rows.push(rowData); }
+    } else if ((rowData.calle || '').trim() && (rowData.zonaTecnicaHFC || rowData.zonaTecnicaFTTH)) {
+      rows.push(rowData);
+    }
+  }
+  return rows;
+}
+
 
     /* ========= MERGE y FILTROS ========= */
     function mergeDatasets(baseRows, otherRows){
