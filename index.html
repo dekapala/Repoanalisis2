@@ -182,12 +182,14 @@ body.modal-open { overflow: hidden; }
     <div id="alertSection"></div>
     <div id="statsSection" class="stats-grid hidden"></div>
 
-    <div class="tabs hidden" id="tabsSection">
-      <button class="tab active" data-tab="edificios">🏢 Edificios</button>
-      <button class="tab" data-tab="zonas">📍 Zonas</button>
-      <button class="tab" data-tab="resumen">📊 Resumen</button>
-      <button class="tab" data-tab="dispositivos">📱 Dispositivos</button>
-    </div>
+   <div class="tabs hidden" id="tabsSection">
+  <button class="tab active" data-tab="edificios">🏢 Edificios</button>
+  <button class="tab" data-tab="zonas">📍 Zonas</button>
+  <button class="tab" data-tab="resumen">📊 Resumen</button>
+  <button class="tab" data-tab="dispositivos">📱 Dispositivos</button>
+  <button class="tab" data-tab="patrones">🕒 Patrones</button>
+</div>
+
 
     <div id="previewSection" class="preview-section">
       <div class="loading">
@@ -380,16 +382,19 @@ body.modal-open { overflow: hidden; }
   // Traigo todo como matriz (sin forzar formato) para poder leer header y valores crudos.
   const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true });
 
-  // Buscar fila de encabezados (primer fila que contenga 'fecha' y 'zona' y 'caso' o 'calle')
-  let headerRow = -1;
-  for (let i = 0; i < Math.min(30, jsonData.length); i++) {
-    const row = jsonData[i] || [];
-    const rowStr = row.join(' ').toLowerCase();
-    if (rowStr.includes('fecha') && rowStr.includes('zona') && (rowStr.includes('caso') || rowStr.includes('calle'))) {
-      headerRow = i; break;
-    }
+// Buscar fila de encabezados (mucho más laxo: basta con 'fecha' + 'zona')
+let headerRow = -1;
+for (let i = 0; i < Math.min(50, jsonData.length); i++) {
+  const row = jsonData[i] || [];
+  const rowStr = row.join(' ').toLowerCase();
+  if (rowStr.includes('fecha') && rowStr.includes('zona')) {
+    headerRow = i; break;
   }
-  if (headerRow === -1) return [];
+}
+// Si no la encontró, usa la primera fila como header y sigue
+if (headerRow === -1) headerRow = 0;
+
+
 
   const headers = (jsonData[headerRow] || []).map(h => String(h || '').trim().toLowerCase());
 
@@ -563,16 +568,27 @@ body.modal-open { overflow: hidden; }
       if (onlyFTTH) rows = rows.filter(r => isFTTHZone(r.zonaTecnicaHFC || r.zonaTecnicaFTTH));
       else if (excludeFTTH) rows = rows.filter(r => !isFTTHZone(r.zonaTecnicaHFC || r.zonaTecnicaFTTH));
 
-      if (filterRange.start || filterRange.end) {
-        rows = rows.filter(r => {
-          const dt = parseDate(r.fechaCreacion); if (!dt) return false;
-          if (filterRange.start && dt < filterRange.start) return false;
-          if (filterRange.end && dt > filterRange.end) return false;
-          return true;
-        });
-      } else {
-        rows = rows.filter(r => inDaysWindow(r.fechaCreacion, DAYS_WINDOW));
-      }
+  if (filterRange.start || filterRange.end) {
+  rows = rows.filter(r => {
+    const dt = parseDate(r.fechaCreacion); if (!dt) return false;
+    if (filterRange.start && dt < filterRange.start) return false;
+    if (filterRange.end && dt > filterRange.end) return false;
+    return true;
+  });
+} else {
+  const rowsByWindow = rows.filter(r => inDaysWindow(r.fechaCreacion, DAYS_WINDOW));
+  // Si la ventana dejó 0 filas, mostramos todo para que no parezca "roto"
+  rows = rowsByWindow.length ? rowsByWindow : rows;
+  if (!rowsByWindow.length) {
+    document.getElementById('alertSection').innerHTML =
+      `<div style="padding:10px;margin:10px;border-left:4px solid #f59e0b;background:#fffbeb;color:#92400e;border-radius:8px;">
+         No hay datos dentro de "Últimos ${DAYS_WINDOW} días". Mostrando todo el reporte.
+       </div>`;
+  } else {
+    document.getElementById('alertSection').innerHTML = '';
+  }
+}
+
 
       currentFilteredRows = rows;
       processedData = analyzeData(currentFilteredRows);
@@ -929,6 +945,7 @@ body.modal-open { overflow: hidden; }
       else if (tab === 'zonas') html = displayZonas(processedData.zonas);
       else if (tab === 'resumen') html = displayResumen(processedData.resumenDiario);
       else if (tab === 'dispositivos') html = displayDispositivos(processedData.dispositivos);
+      else if (tab === 'patrones') html = renderWeekHourHeatmap(currentFilteredRows || []);
       document.getElementById('previewSection').innerHTML = html;
     }
 
@@ -943,11 +960,70 @@ body.modal-open { overflow: hidden; }
           <strong>Error:</strong> ${message}
         </div>`;
     }
+    // ==== Heatmap día-de-la-semana × hora ====
+function buildWeekHourMatrix(rows){
+  const M = Array.from({length:7},()=>Array(24).fill(0)); // 0=Dom..6=Sáb
+  rows.forEach(r=>{
+    const dt = parseDate(r.fechaCreacion); if(!dt) return;
+    const dow = (dt.getDay()+7)%7; // normaliza
+    const h   = dt.getHours();
+    if(h>=0 && h<24) M[dow][h]++;
+  });
+  return M;
+}
+
+function renderWeekHourHeatmap(rows){
+  const M = buildWeekHourMatrix(rows||[]);
+  const max = Math.max(1, ...M.flat());
+  const dow = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+
+  const legend = `
+    <div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
+      <span style="font-size:12px;color:#6b7280">Bajo</span>
+      <div style="display:flex;gap:4px;">
+        ${[0.2,0.4,0.6,0.8,1].map(a=>`<div style="width:18px;height:12px;background:rgba(99,102,241,${a});border-radius:2px;"></div>`).join('')}
+      </div>
+      <span style="font-size:12px;color:#6b7280">Alto</span>
+    </div>`;
+
+  let html = `<div class="preview-title">🕒 Patrones de demanda (día × hora)</div>${legend}`;
+  html += '<div class="table-container" style="overflow:auto">';
+  html += '<table style="border-collapse:collapse;width:max-content">';
+  html += '<thead><tr><th style="position:sticky;left:0;background:linear-gradient(135deg, var(--grad1) 0%, var(--grad2) 100%);color:#fff;padding:6px 8px;">Día</th>';
+  for(let h=0; h<24; h++){
+    html += `<th style="background:linear-gradient(135deg, var(--grad1) 0%, var(--grad2) 100%);color:#fff;padding:6px 8px;font-size:12px;">${String(h).padStart(2,'0')}</th>`;
+  }
+  html += '</tr></thead><tbody>';
+
+  M.forEach((row,i)=>{
+    html += `<tr>`;
+    html += `<td style="position:sticky;left:0;background:#fff;font-weight:700;padding:6px 8px;border-bottom:1px solid #ecf0f1;">${dow[i]}</td>`;
+    row.forEach(v=>{
+      const alpha = 0.15 + 0.85*(v/max);
+      html += `<td title="${v} OTs" style="width:22px;height:22px;background:rgba(99,102,241,${alpha});border:1px solid #fff;"></td>`;
+    });
+    html += `</tr>`;
+  });
+
+  html += '</tbody></table></div>';
+  return html;
+}
+
     function badgeNivel(item) {
       if ((item.countN||0) >= 3 || (item.countN1||0) >= 3) return '<span class="priority-badge priority-critica">CRÍTICO</span>';
       if ((item.maxEnUnDia||0) >= 3) return '<span class="priority-badge priority-alta">ALTO</span>';
       return '<span class="priority-badge priority-media">MEDIO</span>';
     }
+    function deltaBadge(n, n1){
+  const d = (n||0) - (n1||0);
+  if(d===0) return '<span class="pill" style="background:#eef2ff;color:#3730a3;">=</span>';
+  const up = d>0;
+  const color = up ? '#dc2626' : '#16a34a';
+  const sym = up ? '▲' : '▼';
+  const pct = (n1||0) > 0 ? Math.round(Math.abs(d)/n1*100) : 100;
+  return `<span class="pill" style="background:${up?'#fee2e2':'#dcfce7'};color:${color};">${sym} ${Math.abs(d)} (${pct}%)</span>`;
+}
+
 
     function macFromRow(r) {
       const devs = parseDeviceInfo(r.infoDispositivos);
@@ -1109,8 +1185,8 @@ body.modal-open { overflow: hidden; }
             <td><strong>${z.zona}</strong></td>
             <td>${z.totalOTs}</td>
             <td>${z.diasConCasos}</td>
-            <td>${z.ingresoN}</td>
-            <td>${z.ingresoN1}</td>
+            <td>${z.ingresoN} ${deltaBadge(z.ingresoN, z.ingresoN1)}</td>
+<td>${z.ingresoN1}</td>
             <td>${z.maxOTsEnUnDia}</td>
             <td><span class="priority-badge ${z.nivelRiesgo==='CRÍTICO'?'priority-critica':z.nivelRiesgo==='ALTO'?'priority-alta':'priority-media'}">${z.nivelRiesgo}</span></td>
             <td>${z.territorio || '-'}</td>
