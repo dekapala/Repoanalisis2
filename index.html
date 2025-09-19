@@ -1113,17 +1113,19 @@ function openZoneModal(zona) {
     return;
   }
 
-  // Toolbar + minigráficos
-  let html = `
-    <div class="zone-tools">
-      <button class="btn btn-success" onclick="downloadZoneExcel('${zona.replace(/'/g,"&#39;")}')">📥 Excel Zona</button>
-      <button class="btn" style="background:#111827;color:#fff;" onclick="exportSelectedEcoTXT('${zona.replace(/'/g,"&#39;")}')">📝 Exportar ECO (TXT)</button>
-      <label style="display:flex;align-items:center;gap:6px;margin-left:auto;">
-        <input type="checkbox" id="chkAllZone" onchange="toggleAllZoneChecks(this)">
-        <span>Seleccionar todo</span>
-      </label>
-    </div>
-    html += zoneMiniChartsHTML(zoneData);
+// Toolbar + minigráficos
+let html = `
+  <div class="zone-tools">
+    <button class="btn btn-success" onclick="downloadZoneExcel('${zona.replace(/'/g,"&#39;")}')">📥 Excel Zona</button>
+    <button class="btn" style="background:#111827;color:#fff;" onclick="exportSelectedEcoTXT('${zona.replace(/'/g,"&#39;")}')">📝 Exportar ECO (TXT)</button>
+    <label style="display:flex;align-items:center;gap:6px;margin-left:auto;">
+      <input type="checkbox" id="chkAllZone" onchange="toggleAllZoneChecks(this)">
+      <span>Seleccionar todo</span>
+    </label>
+  </div>
+`;
+html += zoneMiniChartsHTML(zoneData);
+
 
 
 
