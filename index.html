@@ -665,7 +665,7 @@ function findHeaderRow(rows) {
 
       const nivelRiesgo  = (ingresoN >= 3 || ingresoN1 >= 3) ? 'CRÍTICO' : (maxOTsEnUnDia >= 3 ? 'ALTO' : 'MEDIO');
 
-      const nodo = nodesByZone.get(String(zona).toUpperCase()) || { up: 0, down: 0 };
+      const nodo = nodesByZone.get(canonicalizeZone(zona)) || { up: 0, down: 0 };
 
       // Diagnósticos
       const diagnosticMap = new Map();    // category -> {count, cases[], color, icon, severity, category}
@@ -724,6 +724,7 @@ function findHeaderRow(rows) {
   catecRate: Number(catecRate.toFixed(1)),
   weekCounts
 });
+      });
 
     // Ordenar zonas: primero N/N-1, luego volumen
     result.zonas.sort((a,b) =>
