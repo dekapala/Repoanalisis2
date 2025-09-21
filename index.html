@@ -234,6 +234,8 @@ body.modal-open { overflow: hidden; }
   const HORIZON_K = 7;              // Horizonte para sparkline
   const DAY_MS = 86400000;
 
+  let nodeToCmts = new Map();
+  
   /* ========= DIAGNÓSTICOS (clasificación) ========= */
   const DIAGNOSTIC_CATEGORIES = {
     EQUIPMENT_DAMAGE: {
@@ -303,6 +305,34 @@ body.modal-open { overflow: hidden; }
     const el = document.getElementById('footerInfo');
     el.textContent = `v4.0 • Merge A/B • FTTH 9xx • Salud y Nodos • Export por zona/eco • Último análisis: ${new Date().toLocaleString()}`;
   }
+// Normaliza zonas/nodos para que coincidan con las de A/B
+function canonicalizeZone(z) {
+  return String(z || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .toUpperCase().replace(/\s+/g,' ').trim()
+    .replace(/^ZONA\s*C\s*/,'C')  // "ZONA C123" -> "C123"
+    .replace(/^ZONA\s*/,'')       // "ZONA 123"  -> "123"
+    .replace(/^CMTS\s*/,'')       // "CMTS C123" -> "C123"
+    .replace(/-/g,'');            // "C-123"     -> "C123"
+}
+
+function toInt(val) {
+  if (val == null || val === '') return 0;
+  if (typeof val === 'number') return Math.round(val);
+  const s = String(val).trim().replace(/\./g,'').replace(/,/g,'.');
+  const n = parseFloat(s.replace(/[^\d.-]/g,''));
+  return isNaN(n) ? 0 : Math.round(n);
+}
+
+function findHeaderRow(rows) {
+  for (let i = 0; i < Math.min(50, rows.length); i++) {
+    const rowStr = (rows[i] || []).map(v => String(v || '').toLowerCase()).join(' ');
+    const hasZonaNodo = /zona|nodo|cmts|zone|node/.test(rowStr);
+    const hasCounts   = /up|down|caidos|caído|offline|online|downstream|upstream/.test(rowStr);
+    if (hasZonaNodo && hasCounts) return i;
+  }
+  return -1;
+}
 
   /* ========= LISTENERS ========= */
   document.addEventListener('DOMContentLoaded', () => {
@@ -676,24 +706,24 @@ body.modal-open { overflow: hidden; }
         if (dt >= start7) weekCounts[dt.getDay()]++;
       });
 
-      result.zonas.push({
-        zona,
-        totalOTs,
-        diasConCasos,
-        ingresoN,
-        ingresoN1,
-        maxOTsEnUnDia,
-        nivelRiesgo,
-        territorio: (casos[0]?.territorio) || '',
-        cmsUp: Number(nodo.up || 0),
-        cmsDown: Number(nodo.down || 0),
-        diagnosticos: Array.from(diagnosticMap.values()),
-        dailyDiagnostics,
-        catecCount,
-        catecRate: Number(catecRate.toFixed(1)),
-        weekCounts
-      });
-    });
+     result.zonas.push({
+  zona,
+  totalOTs,
+  diasConCasos,
+  ingresoN,
+  ingresoN1,
+  maxOTsEnUnDia,
+  nivelRiesgo,
+  territorio: (casos[0]?.territorio) || '',
+  cmsUp: Number(nodo.up || 0),
+  cmsDown: Number(nodo.down || 0),
+  cmts: nodeToCmts.get(canonicalizeZone(zona)) || '',   // <-- NUEVO
+  diagnosticos: Array.from(diagnosticMap.values()),
+  dailyDiagnostics,
+  catecCount,
+  catecRate: Number(catecRate.toFixed(1)),
+  weekCounts
+});
 
     // Ordenar zonas: primero N/N-1, luego volumen
     result.zonas.sort((a,b) =>
@@ -894,39 +924,79 @@ body.modal-open { overflow: hidden; }
   }
 
   /* ========= UP & DOWN NODES ========= */
-  async function handleFileSelectNodes(e){
-    const file = e.target.files[0]; if (!file) return;
-    nodesByZone.clear();
-    try{
-      const data = new Uint8Array(await file.arrayBuffer());
-      const wb = XLSX.read(data, { type:'array', cellDates:true });
-      const sh = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sh, { header:1, defval:'', raw:false });
-      if (!rows.length) return;
+ async function handleFileSelectNodes(e){
+  const file = e.target.files[0]; if (!file) return;
+  nodesByZone.clear();
+  nodeToCmts.clear();
 
-      const hdr = rows[0].map(x => String(x||'').toLowerCase());
-      const findCol = (cands) => { for (const c of cands){ const idx = hdr.findIndex(h => h.includes(c)); if (idx!==-1) return idx; } return -1; };
-      const zonaCol = findCol(['zona','nodo','zone']);
-      const upCol   = findCol(['up']);
-      const dnCol   = findCol(['down']);
-      const start   = (zonaCol !== -1 || upCol !== -1 || dnCol !== -1) ? 1 : 0;
+  try{
+    const data = new Uint8Array(await file.arrayBuffer());
+    const wb = XLSX.read(data, { type:'array', cellDates:true });
+    const sh = wb.Sheets[wb.SheetNames[0]];
 
-      for (let i=start;i<rows.length;i++){
-        const r = rows[i]; if (!r || !r.length) continue;
-        const zonaRaw = zonaCol !== -1 ? r[zonaCol] : (r[2] || r[1] || r[0]);
-        const zona = String(zonaRaw || '').toUpperCase().trim();
-        if (!zona) continue;
+    // raw:true evita formatos raros (separadores, etc.)
+    const rows = XLSX.utils.sheet_to_json(sh, { header:1, defval:'', raw:true });
+    if (!rows.length) return;
 
-        const up   = Number((upCol !== -1 ? r[upCol] : r[3]) || 0);
-        const down = Number((dnCol !== -1 ? r[dnCol] : r[4]) || 0);
+    // Detectar encabezado
+    const headerRow = findHeaderRow(rows);
+    let hdr = [], start = 0;
+    if (headerRow !== -1){
+      hdr = (rows[headerRow] || []).map(x => String(x || '').toLowerCase());
+      start = headerRow + 1;
+    }
 
-        const prev = nodesByZone.get(zona) || { up:0, down:0 };
-        nodesByZone.set(zona, { up: prev.up + (isNaN(up)?0:up), down: prev.down + (isNaN(down)?0:down) });
+    const findCol = (cands) => {
+      for (const c of cands){
+        const idx = hdr.findIndex(h => h.includes(c));
+        if (idx !== -1) return idx;
+      }
+      return -1;
+    };
+
+    // Columnas (según tu captura: Fecha | CMTS | Nodo | Up | Down | Unknown)
+    let cmtsCol = findCol(['cmts']);
+    let nodoCol = findCol(['nodo','node']);     // preferimos Nodo como “zona”
+    let upCol   = findCol(['up','online','activos','upstream']);
+    let dnCol   = findCol(['down','offline','caidos','caído','downstream']);
+
+    // Sin header claro: asumir [*, CMTS, Nodo, Up, Down]
+    if (headerRow === -1){
+      if (cmtsCol === -1) cmtsCol = 1;
+      if (nodoCol === -1) nodoCol = 2;
+      if (upCol   === -1) upCol   = 3;
+      if (dnCol   === -1) dnCol   = 4;
+    }
+
+    let parsed = 0;
+    for (let i = start; i < rows.length; i++){
+      const r = rows[i]; if (!r || !r.length) continue;
+
+      const nodoRaw = nodoCol !== -1 ? r[nodoCol] : (r[0] ?? '');
+      const zonaKey = canonicalizeZone(nodoRaw);
+      if (!zonaKey) continue;
+
+      const cmtsVal = cmtsCol !== -1 ? String(r[cmtsCol] || '').toUpperCase().trim() : '';
+      if (cmtsVal) {
+        // Guardamos el mapeo Nodo -> CMTS (la última ocurrencia gana)
+        nodeToCmts.set(zonaKey, cmtsVal);
       }
 
-      if (processedData && currentTab === 'zonas') displayData('zonas');
-    } catch(err){ showError('Error al leer Up&Down Nodes: ' + err.message); }
+      const up   = toInt(upCol !== -1 ? r[upCol] : 0);
+      const down = toInt(dnCol !== -1 ? r[dnCol] : 0);
+
+      const prev = nodesByZone.get(zonaKey) || { up:0, down:0 };
+      nodesByZone.set(zonaKey, { up: prev.up + up, down: prev.down + down });
+      parsed++;
+    }
+
+    if (processedData && currentTab === 'zonas') displayData('zonas');
+    if (!parsed) showError('No se pudieron leer filas de Up&Down Nodes. Revisá encabezados: CMTS / Nodo / Up / Down.');
+
+  } catch(err){
+    showError('Error al leer Up&Down Nodes: ' + err.message);
   }
+}
 
   /* ========= STATS & SWITCH DE RENDER ========= */
   function displayStatistics(proc){
@@ -1339,6 +1409,8 @@ body.modal-open { overflow: hidden; }
     const modalTitle = document.getElementById('modalTitle');
     const modalBody = document.getElementById('modalBody');
     modalTitle.textContent = '📍 Zona: ' + zona;
+    const cmtsForZone = nodeToCmts.get(canonicalizeZone(zona)) || '—';
+
 
     const zoneData = (zoneDetailsMap && zoneDetailsMap[zona]) ? zoneDetailsMap[zona] : [];
     if (!zoneData.length) {
@@ -1362,6 +1434,11 @@ body.modal-open { overflow: hidden; }
       <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:10px;margin:8px 0;border-radius:8px;">
         <strong>📊 Análisis de Diagnósticos:</strong><br>${diagnosticAnalysis}
       </div>`;
+    html += `
+  <div style="display:flex;gap:8px;align-items:center;margin:6px 0 8px 0;">
+    <span class="pill" style="background:#e0f2fe;color:#075985;">CMTS: ${cmtsForZone}</span>
+  </div>`;
+
     html += zoneMiniChartsHTML(zoneData);
 
     // Agrupar por fecha y por OT
@@ -1574,6 +1651,7 @@ body.modal-open { overflow: hidden; }
 
     const rowsZ = processedData.zonas.map(z => ({
       Zona: z.zona,
+      CMTS: z.cmts || '',
       TotalOTs: z.totalOTs,
       DiasConOTs: z.diasConCasos,
       IngresoN: z.ingresoN,
