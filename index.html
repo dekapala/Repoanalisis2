@@ -483,15 +483,16 @@ function findHeaderRow(rows) {
     } catch(err){ showError('Error al leer Reporte B: ' + err.message); }
   }
 
- // ================== EXTRACTOR ==================
+// ================== EXTRACTOR ==================
 function extractRowsFromWorkbook(workbook, collectStates = false){
   const sheetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
   if (!sheet) return [];
 
+  // Leemos crudo para conservar números y fechas
   const jsonData = XLSX.utils.sheet_to_json(sheet, { header:1, defval:'', raw:true });
 
-  // localizar encabezado
+  // Localizar encabezado
   let headerRow = -1;
   for (let i=0;i<Math.min(50,jsonData.length);i++){
     const s = (jsonData[i]||[]).join(' ').toLowerCase();
@@ -511,7 +512,7 @@ function extractRowsFromWorkbook(workbook, collectStates = false){
     return -1;
   };
 
-  // columnas principales
+  // Columnas principales
   const cFechaHora = findCol(['fecha/hora','fecha y hora','fecha hora','fechahora','datetime']);
   const cFechaSolo = findCol(['fecha creación','fecha creacion','fecha alta','fecha']);
   const cHora      = findCol(['hora','hora creación','hora creacion']);
@@ -530,16 +531,16 @@ function extractRowsFromWorkbook(workbook, collectStates = false){
   const cTerr      = findCol(['territorio','region','región','province','provincia']);
   const cInfoDev   = findCol(['info dispositivos','dispositivos','equipos','deviceinfo','info equipos']);
 
-  // detectar TODAS las columnas "estado" (O,P,Q…)
+  // Detectar TODAS las columnas "estado"
   const estadoIdxs = headers.map((h,i)=>({h,i})).filter(o=>o.h.includes('estado')).map(o=>o.i);
-  const cEstado1 = estadoIdxs[0] ?? findCol(['estado 1','estado1','estado']);
-  const cEstado2 = estadoIdxs[1] ?? findCol(['estado 2','estado2']);
-  const cEstado3 = estadoIdxs[2] ?? findCol(['estado 3','estado3']);
+  const cEstado1 = (estadoIdxs[0] ?? findCol(['estado 1','estado1','estado']));
+  const cEstado2 = (estadoIdxs[1] ?? findCol(['estado 2','estado2']));
+  const cEstado3 = (estadoIdxs[2] ?? findCol(['estado 3','estado3']));
 
-  // ¿parece Reporte B (Open)?
+  // ¿Parece Reporte B (Open)?
   const isReportB = headers.some(h => h.includes('workorderid') || h.includes('diagnostic'));
 
-  // fecha/hora → string dd/mm/yyyy HH:MM
+  // Helpers fecha/hora → "dd/mm/yyyy HH:MM"
   const fmt2 = (n)=>String(n).padStart(2,'0');
   const toStrDateTime = (valFecha, valHora) => {
     const fromAny = (v) => {
@@ -589,7 +590,7 @@ function extractRowsFromWorkbook(workbook, collectStates = false){
     );
     if (!fechaStr) continue;
 
-    // calle = "calle" o STREETNAME + STREETNUM si hace falta
+    // Calle = "calle" o STREETNAME + STREETNUM si hace falta
     const streetName = cCalle !== -1 ? r[cCalle]
                      : (findCol(['streetname','street name'])!==-1 ? r[findCol(['streetname','street name'])] : '');
     const streetNum  = cStreetNum !== -1 ? r[cStreetNum] : '';
@@ -615,7 +616,7 @@ function extractRowsFromWorkbook(workbook, collectStates = false){
       infoDispositivos: cInfoDev !== -1 ? (r[cInfoDev] || '') : ''
     };
 
-    // catálogo de estados (solo A)
+    // Catálogo de estados (solo A)
     if (collectStates) {
       const v1 = String(rowData.estado1||'');
       const v2 = String(rowData.estado2||'');
@@ -625,64 +626,13 @@ function extractRowsFromWorkbook(workbook, collectStates = false){
       stateCatalog.estado3.add(v3 === '' ? '(Vacías)' : v3);
     }
 
+    // Dedupe por OT o por (dirección|fecha)
     const keyOT = rowData.numeroCita || ((rowData.calle||'') + '|' + rowData.fechaCreacion);
     if (!seenOT.has(keyOT)) { seenOT.add(keyOT); rows.push(rowData); }
   }
+
   return rows;
 }
-
-    const rows = [];
-    const citas = new Set();
-
-    for (let i=headerRow+1;i<jsonData.length;i++){
-      const r = jsonData[i] || [];
-
-      const fechaStr = toStrDateTime(
-        (cFechaHora !== -1 ? r[cFechaHora] : (cFechaSolo !== -1 ? r[cFechaSolo] : (r[0]||''))),
-        (cHora !== -1 ? r[cHora] : '')
-      );
-      if (!fechaStr) continue;
-
-      const rowData = {
-        fechaCreacion: String(fechaStr),
-        zonaTecnicaHFC: cZonaHFC !== -1 ? (r[cZonaHFC] || '') : '',
-        calle:          cCalle   !== -1 ? (r[cCalle]   || '') : '',
-        telefono:       cTel     !== -1 ? (r[cTel]     || '') : '',
-        numeroCaso:     cCaso    !== -1 ? (r[cCaso]    || '') : '',
-        numeroOrden:    cOrden   !== -1 ? (r[cOrden]   || '') : '',
-        externalCaseId: cEco     !== -1 ? (r[cEco]     || '') : '',
-        diagnosticoTecnico: cDiag !== -1 ? (r[cDiag]   || '') : '',
-        numeroCita:     cCita    !== -1 ? (r[cCita]    || '') : '',
-        zonaTecnicaFTTH:cZonaFT  !== -1 ? (r[cZonaFT]  || '') : '',
-        globalIdExtTkt: cGlobal  !== -1 ? (r[cGlobal]  || '') : '',
-        tipoTrabajo:    cTrabajo !== -1 ? (r[cTrabajo] || '') : '',
-        estado1:        cEstado1 !== -1 ? (r[cEstado1] || '') : '',
-        estado2:        cEstado2 !== -1 ? (r[cEstado2] || '') : '',
-        estado3:        cEstado3 !== -1 ? (r[cEstado3] || '') : '',
-        territorio:     cTerr    !== -1 ? (r[cTerr]    || '') : '',
-        infoDispositivos: cInfoDev !== -1 ? (r[cInfoDev] || '') : ''
-      };
-
-      // ===== PUNTO 3.3: completar catálogo de estados (solo en A)
-      if (collectStates) {
-        const v1 = String(rowData.estado1 || '').trim();
-        const v2 = String(rowData.estado2 || '').trim();
-        const v3 = String(rowData.estado3 || '').trim();
-        if (v1) stateCatalog.estado1.add(v1);
-        if (v2) stateCatalog.estado2.add(v2);
-        if (v3) stateCatalog.estado3.add(v3);
-      }
-
-      // lógica de duplicados por OT (igual que tenías)
-      if (rowData.numeroCita){
-        if (!citas.has(rowData.numeroCita)) { citas.add(rowData.numeroCita); rows.push(rowData); }
-      } else if ((rowData.calle || '').trim() && (rowData.zonaTecnicaHFC || rowData.zonaTecnicaFTTH)){
-        rows.push(rowData);
-      }
-    }
-    return rows;
-  }
-
 
 
 
