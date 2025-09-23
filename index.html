@@ -338,6 +338,20 @@ let stateMode = 'include';      // 'include' (mostrar solo seleccionados) | 'exc
     const end  = new Date(today.getTime() + (24*60*60*1000 - 1));
     return dt >= from && dt <= end;
   }
+  function slope(arr){
+  const n = Array.isArray(arr) ? arr.length : 0;
+  if (!n) return 0;
+  const mx = (n - 1) / 2;
+  const my = arr.reduce((a,b)=> a + (Number(b) || 0), 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++){
+    const dx = i - mx;
+    const dy = (Number(arr[i]) || 0) - my;
+    num += dx * dy;
+    den += dx * dx;
+  }
+  return den ? (num / den) : 0;
+}
   function sparkline(counts){
     const max = Math.max(1, ...counts);
     const days = ['Hoy','Ayer','N-2','N-3','N-4','N-5','N-6','N-7','N-8'];
@@ -776,52 +790,88 @@ function extractRowsFromWorkbook(workbook, collectStates = false){
         }
       });
 
-      // % CATEC sobre OTs únicas
-      const otCATEC = new Set();
-      casos.forEach(c => {
-        const t = (c.tipoTrabajo||'').toUpperCase();
-        if (t.includes('CATEC')) {
-          const ot = c.numeroCita || ((c.calle||'') + '|' + c.fechaCreacion);
-          otCATEC.add(ot);
-        }
-      });
-      const catecCount = otCATEC.size;
-      const catecRate  = totalOTs ? (catecCount / totalOTs) * 100 : 0;
+  // % CATEC sobre OTs únicas (usa el mismo totalOTs que calculaste arriba)
+const otCATEC = new Set();
+casos.forEach(c => {
+  const t = String(c.tipoTrabajo || '').toUpperCase();
+  if (t.includes('CATEC')) {
+    const ot = c.numeroCita || ((c.calle || '') + '|' + c.fechaCreacion);
+    otCATEC.add(ot);
+  }
+});
+const catecCount = otCATEC.size;
+const catecRate  = totalOTs ? (catecCount / totalOTs) * 100 : 0;
 
-      // Últimos 7 días por día de semana (0=Dom..6=Sáb)
-      const start7 = new Date(); start7.setHours(0,0,0,0); start7.setDate(start7.getDate()-6);
-      const weekCounts = Array(7).fill(0);
-      casos.forEach(c => {
-        const dt = parseDate(c.fechaCreacion); if (!dt) return;
-        if (dt >= start7) weekCounts[dt.getDay()]++;
-      });
+// Últimos 7 días por día de semana (0=Dom..6=Sáb)
+const start7 = new Date();
+start7.setHours(0,0,0,0);
+start7.setDate(start7.getDate() - 6);
 
-     result.zonas.push({
+const weekCounts = Array(7).fill(0);
+casos.forEach(c => {
+  const dt = parseDate(c.fechaCreacion);
+  if (!dt) return;
+  if (dt >= start7) weekCounts[dt.getDay()]++;
+});
+
+// Serie 7 días (N-6..N) de OTs únicas por día (usa seenOTperDay y todayEpoch creados arriba)
+const serie7 = [];
+for (let i = 6; i >= 0; i--) {
+  const dk = todayEpoch - i * DAY_MS;
+  const set = seenOTperDay.get(dk);
+  serie7.push(set ? set.size : 0);
+}
+
+// Tendencia (pendiente)
+const slope7 = slope(serie7);
+
+// Score compuesto (ajustá pesos a gusto)
+const scoreZona =
+  4   * Math.min(ingresoN, 5) +
+  2   * Math.min(ingresoN1, 5) +
+  1.5 * Math.min(maxOTsEnUnDia, 5) +
+  (Number(nodo.down || 0) > 0 ? 3 : 0) + // penaliza CMS down
+  Math.min(catecRate / 10, 4) +          // 0..4 por %CATEC
+  Math.max(0, slope7 * 2);               // refuerza tendencia ↑
+
+// Nivel según score
+const nivelRiesgoByScore =
+  scoreZona >= 12 ? 'CRÍTICO' :
+  scoreZona >= 7  ? 'ALTO'    : 'MEDIO';
+
+  
+// Push de la zona
+result.zonas.push({
   zona,
   totalOTs,
   diasConCasos,
   ingresoN,
   ingresoN1,
   maxOTsEnUnDia,
-  nivelRiesgo,
+  nivelRiesgo: nivelRiesgoByScore,  // <-- usar el nuevo
   territorio: (casos[0]?.territorio) || '',
   cmsUp: Number(nodo.up || 0),
   cmsDown: Number(nodo.down || 0),
-  cmts: nodeToCmts.get(canonicalizeZone(zona)) || '',   // <-- NUEVO
+  cmts: nodeToCmts.get(canonicalizeZone(zona)) || '',
   diagnosticos: Array.from(diagnosticMap.values()),
   dailyDiagnostics,
   catecCount,
   catecRate: Number(catecRate.toFixed(1)),
-  weekCounts
+  weekCounts,
+  // extras (útiles para depurar o ordenar)
+  scoreZona,
+  slope7
 });
       });
 
-    // Ordenar zonas: primero N/N-1, luego volumen
-    result.zonas.sort((a,b) =>
-      (b.ingresoN  - a.ingresoN)  ||
-      (b.ingresoN1 - a.ingresoN1) ||
-      (b.totalOTs  - a.totalOTs)
-    );
+  // Ordenar zonas: primero score, luego N/N-1 y por último volumen
+result.zonas.sort((a, b) =>
+  (Number(b.scoreZona ?? 0) - Number(a.scoreZona ?? 0)) ||
+  (Number(b.ingresoN  ?? 0) - Number(a.ingresoN  ?? 0)) ||
+  (Number(b.ingresoN1 ?? 0) - Number(a.ingresoN1 ?? 0)) ||
+  (Number(b.totalOTs  ?? 0) - Number(a.totalOTs  ?? 0))
+);
+
 
     // ---- Resumen diario
     const dailyGroups = {}; const citasPorDia = {};
