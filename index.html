@@ -108,7 +108,33 @@ body.modal-open { overflow: hidden; }
           <span>Cruzar con B</span>
         </label>
       </div>
+<!-- ESTADOS (AVANZADO) -->
+<div class="control-group" id="estadoFilterGroup">
+  <span class="group-title">ESTADOS (AVANZADO)</span>
 
+  <label style="display:flex;align-items:center;gap:6px;">
+    <input type="checkbox" id="estadoFilterEnabled">
+    <span>Filtrar por estados</span>
+  </label>
+
+  <div style="display:flex;gap:10px;align-items:center;">
+    <span style="color:#6b7280;font-weight:700;">Buscar en:</span>
+    <label><input type="checkbox" id="estadoUseE1" checked> E1</label>
+    <label><input type="checkbox" id="estadoUseE2" checked> E2</label>
+    <label><input type="checkbox" id="estadoUseE3" checked> E3</label>
+
+    <label style="margin-left:8px;color:#6b7280;font-weight:700;">Coincidencia</label>
+    <select id="estadoMatchMode">
+      <option value="any">Cualquiera</option>
+      <option value="all">Todas</option>
+    </select>
+
+    <button class="btn" id="estadoSelectAllBtn">Marcar todo</button>
+    <button class="btn" id="estadoClearAllBtn">Limpiar</button>
+  </div>
+
+  <div id="estadoOptions" style="max-height:120px;overflow:auto;padding:6px 4px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;min-width:260px;"></div>
+</div>
       <!-- Filtros base -->
       <div class="control-group">
         <span class="group-title">FILTROS BASE</span>
@@ -270,6 +296,28 @@ body.modal-open { overflow: hidden; }
   let selectedHealthState = 'all';
   let nodesByZone = new Map();  // Map<ZONA, {up:number, down:number}>
 
+  // === 3.2 Filtro avanzado por ESTADOS (O, P, Q) ===
+const STATE_KEYS = ['estado1','estado2','estado3']; // mapean a columnas O,P,Q detectadas
+
+// Catálogo de opciones disponibles (se completa al leer el reporte A)
+let stateCatalog = {
+  estado1: new Set(),
+  estado2: new Set(),
+  estado3: new Set(),
+};
+
+// Selección actual del usuario (checks tildados)
+let selectedStates = {
+  estado1: new Set(),
+  estado2: new Set(),
+  estado3: new Set(),
+};
+
+// Config del filtro
+let useStateFilter = false;     // master ON/OFF
+let stateMode = 'include';      // 'include' (mostrar solo seleccionados) | 'exclude' (ocultar seleccionados)
+
+
   /* ========= UTILS ========= */
   function parseDate(str) {
     if (!str) return null;
@@ -392,7 +440,8 @@ function findHeaderRow(rows) {
     updateFooterInfo();
   });
 
-  /* ========= PARSERS / LOADERS ========= */
+ <!-- ========= PARSERS / LOADERS ========= -->
+
   async function handleFileSelectA(e) {
     const file = e.target.files[0]; if (!file) return;
     document.getElementById('fileName').textContent = '📄 ' + file.name;
@@ -400,8 +449,19 @@ function findHeaderRow(rows) {
     try {
       const data = new Uint8Array(await file.arrayBuffer());
       const wb = XLSX.read(data, { type:'array', cellDates:true });
-      dataRowsA = extractRowsFromWorkbook(wb);
+
+      // ===== PUNTO 3.3: resetear catálogos/selección de estados y parsear recolectando =====
+      stateCatalog  = { estado1:new Set(), estado2:new Set(), estado3:new Set() };
+      selectedStates= { estado1:new Set(), estado2:new Set(), estado3:new Set() };
+      useStateFilter = false;
+      const tgl = document.getElementById('toggleStateFilter'); if (tgl) tgl.checked = false;
+
+      dataRowsA = extractRowsFromWorkbook(wb, /*collectStates=*/true);
       globalDataRows = dataRowsA;
+
+      // ===== PUNTO 3.4: construir los checkboxes de estado con lo recolectado =====
+      if (typeof renderStateChecks === 'function') renderStateChecks();
+
       document.getElementById('downloadBtn').style.display = 'inline-flex';
       document.getElementById('statsSection').classList.remove('hidden');
       document.getElementById('tabsSection').classList.remove('hidden');
@@ -409,48 +469,168 @@ function findHeaderRow(rows) {
       applyCurrentFilters();
     } catch(err){ showError('Error al leer Reporte A: ' + err.message); }
   }
+
   async function handleFileSelectB(e) {
     const file = e.target.files[0]; if (!file) return;
     try {
       const data = new Uint8Array(await file.arrayBuffer());
       const wb = XLSX.read(data, { type:'array', cellDates:true });
-      dataRowsB = extractRowsFromWorkbook(wb);
+
+      // ===== PUNTO 3.3: parsear B SIN recolectar catálogo de estados =====
+      dataRowsB = extractRowsFromWorkbook(wb, /*collectStates=*/false);
+
       applyCurrentFilters();
     } catch(err){ showError('Error al leer Reporte B: ' + err.message); }
   }
 
-function extractRowsFromWorkbook(workbook){
-  const sheetName = workbook.SheetNames[0];
-  const sheet = workbook.Sheets[sheetName];
-  if (!sheet) return [];
+  // ================== EXTRACTOR ==================
+  // add: collectStates (true para Reporte A)  ← PUNTO 3.3
+  function extractRowsFromWorkbook(workbook, collectStates = false){
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) return [];
 
-  // leemos crudo para conservar números y fechas tal cual
-  const jsonData = XLSX.utils.sheet_to_json(sheet, { header:1, defval:'', raw:true });
+    // leemos crudo para conservar números y fechas tal cual
+    const jsonData = XLSX.utils.sheet_to_json(sheet, { header:1, defval:'', raw:true });
 
-  // localizar encabezado (algo que tenga fecha y zona/node)
-  let headerRow = -1;
-  for (let i=0;i<Math.min(50,jsonData.length);i++){
-    const row = jsonData[i]||[];
-    const s = row.join(' ').toLowerCase();
-    if (s.includes('fecha') || s.includes('date')){
-      if (s.includes('zona') || s.includes('node') || s.includes('nodo')){
-        headerRow = i; break;
+    // localizar encabezado (algo que tenga fecha y zona/node)
+    let headerRow = -1;
+    for (let i=0;i<Math.min(50,jsonData.length);i++){
+      const row = jsonData[i]||[];
+      const s = row.join(' ').toLowerCase();
+      if ((s.includes('fecha') || s.includes('date')) &&
+          (s.includes('zona') || s.includes('node') || s.includes('nodo'))) { headerRow = i; break; }
+    }
+    if (headerRow === -1) headerRow = 0;
+
+    const headers = (jsonData[headerRow]||[]).map(h => String(h||'').trim().toLowerCase());
+    const findCol = (cands) => {
+      for (const c of cands){
+        let idx = headers.findIndex(h => h === c);
+        if (idx !== -1) return idx;
+        idx = headers.findIndex(h => h.includes(c));
+        if (idx !== -1) return idx;
+      }
+      return -1;
+    };
+
+    // --- columnas principales (las que ya usaba tu app)
+    const cFechaHora = findCol(['fecha/hora','fecha y hora','fecha hora','fechahora','datetime']);
+    const cFechaSolo = findCol(['fecha creación','fecha creacion','fecha alta','fecha']);
+    const cHora      = findCol(['hora','hora creación','hora creacion']);
+    const cZonaHFC   = findCol(['zona tecnica hfc','zona hfc/cmts','zona hfc','nodo','node','zona']);
+    const cZonaFT    = findCol(['zona tecnica ftth','zona ftth']);
+    const cCalle     = findCol(['calle','direccion','dirección']);
+    const cTel       = findCol(['telefono','teléfono']);
+    const cCaso      = findCol(['numero de caso','nro caso','caso','ticket']);
+    const cOrden     = findCol(['numero de orden','nro orden','orden','workorderid']);
+    const cEco       = findCol(['externalcaseid','eco','external case id']);
+    const cDiag      = findCol(['diagnostico tecnico','diagnóstico técnico','diagnostico','diagnóstico']);
+    const cCita      = findCol(['numero de cita','nro cita','cita','ot','sa']);
+    const cGlobal    = findCol(['globalidexttkt','global id ext tkt','global id']);
+    const cTrabajo   = findCol(['tipo de trabajo','tipo trabajo','trabajo','category']);
+    const cEstado1H  = findCol(['estado 1','estado1','estado']);
+    const cEstado2H  = findCol(['estado 2','estado2']);
+    const cEstado3H  = findCol(['estado 3','estado3']);
+    const cTerr      = findCol(['territorio','region','región','province','provincia']);
+    const cInfoDev   = findCol(['info dispositivos','dispositivos','equipos','deviceinfo','info equipos']);
+
+    // ===== PUNTO 3.3: detectar TODAS las columnas que contengan "estado" (O,P,Q o como vengan)
+    const estadoIdxs = headers
+      .map((h,i)=>({h,i}))
+      .filter(o => o.h.includes('estado'))
+      .map(o => o.i);
+    const cEstado1 = (estadoIdxs[0] ?? cEstado1H ?? -1);
+    const cEstado2 = (estadoIdxs[1] ?? cEstado2H ?? -1);
+    const cEstado3 = (estadoIdxs[2] ?? cEstado3H ?? -1);
+
+    // helpers de fecha
+    const fmt2 = (n)=>String(n).padStart(2,'0');
+    const toStrDateTime = (valFecha, valHora) => {
+      const fromAny = (v) => {
+        if (v instanceof Date) return v;
+        if (typeof v === 'number') {
+          const p = XLSX.SSF.parse_date_code(v);
+          if (p) return new Date(Date.UTC(p.y, p.m-1, p.d, p.H||0, p.M||0, p.S||0));
+          return null;
+        }
+        const s = String(v).trim().replace(',', ' ');
+        if (!s) return null;
+        if (/\d{1,2}\/\d{1,2}\/\d{2,4}[\s,]+\d{1,2}:\d{2}/.test(s)) return s;
+        const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+        if (m) return new Date(Number(m[3].length===2?'20'+m[3]:m[3]), Number(m[2])-1, Number(m[1]));
+        return s;
+      };
+      let d = fromAny(valFecha);
+      let hh=0,mm=0;
+      if (valHora != null && valHora !== ''){
+        if (valHora instanceof Date){ hh=valHora.getHours(); mm=valHora.getMinutes(); }
+        else if (typeof valHora === 'number'){
+          const frac = valHora - Math.floor(valHora);
+          const totalMin = Math.round(frac*24*60);
+          hh = Math.floor(totalMin/60); mm = totalMin%60;
+        } else {
+          const hm = String(valHora).trim().match(/(\d{1,2}):(\d{2})/);
+          if (hm){ hh=Number(hm[1]); mm=Number(hm[2]); }
+        }
+      }
+      if (d instanceof Date && !isNaN(d.getTime())) return `${fmt2(d.getDate())}/${fmt2(d.getMonth()+1)}/${d.getFullYear()} ${fmt2(hh)}:${fmt2(mm)}`;
+      if (typeof d === 'string'){ if (valHora && !/\d{1,2}:\d{2}/.test(d)) return `${d} ${fmt2(hh)}:${fmt2(mm)}`; return d; }
+      return '';
+    };
+
+    const rows = [];
+    const citas = new Set();
+
+    for (let i=headerRow+1;i<jsonData.length;i++){
+      const r = jsonData[i] || [];
+
+      const fechaStr = toStrDateTime(
+        (cFechaHora !== -1 ? r[cFechaHora] : (cFechaSolo !== -1 ? r[cFechaSolo] : (r[0]||''))),
+        (cHora !== -1 ? r[cHora] : '')
+      );
+      if (!fechaStr) continue;
+
+      const rowData = {
+        fechaCreacion: String(fechaStr),
+        zonaTecnicaHFC: cZonaHFC !== -1 ? (r[cZonaHFC] || '') : '',
+        calle:          cCalle   !== -1 ? (r[cCalle]   || '') : '',
+        telefono:       cTel     !== -1 ? (r[cTel]     || '') : '',
+        numeroCaso:     cCaso    !== -1 ? (r[cCaso]    || '') : '',
+        numeroOrden:    cOrden   !== -1 ? (r[cOrden]   || '') : '',
+        externalCaseId: cEco     !== -1 ? (r[cEco]     || '') : '',
+        diagnosticoTecnico: cDiag !== -1 ? (r[cDiag]   || '') : '',
+        numeroCita:     cCita    !== -1 ? (r[cCita]    || '') : '',
+        zonaTecnicaFTTH:cZonaFT  !== -1 ? (r[cZonaFT]  || '') : '',
+        globalIdExtTkt: cGlobal  !== -1 ? (r[cGlobal]  || '') : '',
+        tipoTrabajo:    cTrabajo !== -1 ? (r[cTrabajo] || '') : '',
+        estado1:        cEstado1 !== -1 ? (r[cEstado1] || '') : '',
+        estado2:        cEstado2 !== -1 ? (r[cEstado2] || '') : '',
+        estado3:        cEstado3 !== -1 ? (r[cEstado3] || '') : '',
+        territorio:     cTerr    !== -1 ? (r[cTerr]    || '') : '',
+        infoDispositivos: cInfoDev !== -1 ? (r[cInfoDev] || '') : ''
+      };
+
+      // ===== PUNTO 3.3: completar catálogo de estados (solo en A)
+      if (collectStates) {
+        const v1 = String(rowData.estado1 || '').trim();
+        const v2 = String(rowData.estado2 || '').trim();
+        const v3 = String(rowData.estado3 || '').trim();
+        if (v1) stateCatalog.estado1.add(v1);
+        if (v2) stateCatalog.estado2.add(v2);
+        if (v3) stateCatalog.estado3.add(v3);
+      }
+
+      // lógica de duplicados por OT (igual que tenías)
+      if (rowData.numeroCita){
+        if (!citas.has(rowData.numeroCita)) { citas.add(rowData.numeroCita); rows.push(rowData); }
+      } else if ((rowData.calle || '').trim() && (rowData.zonaTecnicaHFC || rowData.zonaTecnicaFTTH)){
+        rows.push(rowData);
       }
     }
+    return rows;
   }
-  if (headerRow === -1) headerRow = 0;
 
-  const headers = (jsonData[headerRow]||[]).map(h => String(h||'').trim().toLowerCase());
-
-  const findCol = (cands) => {
-    for (const c of cands){
-      let idx = headers.findIndex(h => h === c);
-      if (idx !== -1) return idx;
-      idx = headers.findIndex(h => h.includes(c));
-      if (idx !== -1) return idx;
-    }
-    return -1;
-  };
 
   // === columnas (A + B) ===
   const cFechaHora   = findCol(['fecha/hora','fecha y hora','fecha hora','fecha_hora','fechahora','fecha completa','datetime','date']);
