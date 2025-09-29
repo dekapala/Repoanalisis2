@@ -513,13 +513,7 @@ async function handleFileSelectB(e) {
 }
 
 
-      // ===== PUNTO 3.3: parsear B SIN recolectar catálogo de estados =====
-      dataRowsB = extractRowsFromWorkbook(wb, /*collectStates=*/false);
-
-      applyCurrentFilters();
-    } catch(err){ showError('Error al leer Reporte B: ' + err.message); }
-  }
-
+  
 // ================== EXTRACTOR ==================
 function extractRowsFromWorkbook(workbook, collectStates = false){
   const sheetName = workbook.SheetNames[0];
@@ -1097,7 +1091,6 @@ async function handleFileSelectNodes(e){
     const data = new Uint8Array(await file.arrayBuffer());
     const wb = XLSX.read(data, { type:'array', cellDates:true });
     const sh = wb.Sheets[wb.SheetNames[0]];
-
     const rows = XLSX.utils.sheet_to_json(sh, { header:1, defval:'', raw:true });
     if (!rows.length) return;
 
@@ -1121,6 +1114,7 @@ async function handleFileSelectNodes(e){
     let upCol   = findCol(['up','online','activos','upstream']);
     let dnCol   = findCol(['down','offline','caidos','caído','downstream']);
 
+    // Sin header claro: asumir [*, CMTS, Nodo, Up, Down]
     if (headerRow === -1){
       if (cmtsCol === -1) cmtsCol = 1;
       if (nodoCol === -1) nodoCol = 2;
@@ -1147,7 +1141,7 @@ async function handleFileSelectNodes(e){
       parsed++;
     }
 
-    // ✅ Poblar lista de CMTS AQUÍ (ya está nodeToCmts)
+    // Poblar CMTS <select>
     const cmtsSelect = document.getElementById('cmtsSelect');
     if (cmtsSelect) {
       const uniqueCmts = Array.from(new Set(Array.from(nodeToCmts.values()))).sort();
@@ -1163,43 +1157,6 @@ async function handleFileSelectNodes(e){
 }
 
 
-    // Sin header claro: asumir [*, CMTS, Nodo, Up, Down]
-    if (headerRow === -1){
-      if (cmtsCol === -1) cmtsCol = 1;
-      if (nodoCol === -1) nodoCol = 2;
-      if (upCol   === -1) upCol   = 3;
-      if (dnCol   === -1) dnCol   = 4;
-    }
-
-    let parsed = 0;
-    for (let i = start; i < rows.length; i++){
-      const r = rows[i]; if (!r || !r.length) continue;
-
-      const nodoRaw = nodoCol !== -1 ? r[nodoCol] : (r[0] ?? '');
-      const zonaKey = canonicalizeZone(nodoRaw);
-      if (!zonaKey) continue;
-
-      const cmtsVal = cmtsCol !== -1 ? String(r[cmtsCol] || '').toUpperCase().trim() : '';
-      if (cmtsVal) {
-        // Guardamos el mapeo Nodo -> CMTS (la última ocurrencia gana)
-        nodeToCmts.set(zonaKey, cmtsVal);
-      }
-
-      const up   = toInt(upCol !== -1 ? r[upCol] : 0);
-      const down = toInt(dnCol !== -1 ? r[dnCol] : 0);
-
-      const prev = nodesByZone.get(zonaKey) || { up:0, down:0 };
-      nodesByZone.set(zonaKey, { up: prev.up + up, down: prev.down + down });
-      parsed++;
-    }
-
-    if (processedData && currentTab === 'zonas') displayData('zonas');
-    if (!parsed) showError('No se pudieron leer filas de Up&Down Nodes. Revisá encabezados: CMTS / Nodo / Up / Down.');
-
-  } catch(err){
-    showError('Error al leer Up&Down Nodes: ' + err.message);
-  }
-}
 
   /* ========= STATS & SWITCH DE RENDER ========= */
   function displayStatistics(proc){
