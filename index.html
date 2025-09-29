@@ -385,12 +385,35 @@ function findHeaderRow(rows) {
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('fileInput').addEventListener('change', handleFileSelectA);
   document.getElementById('fileInputB').addEventListener('change', handleFileSelectB);
-  document.getElementById('toggleMergeB').addEventListener('change', e => { useMergeB = e.target.checked; applyCurrentFilters(); });
+  document.getElementById('toggleMergeB').addEventListener('change', e => { 
+    useMergeB = e.target.checked; 
+    applyCurrentFilters(); 
+  });
 
-  document.getElementById('toggleInstalaciones').addEventListener('change', e => { includeInstalaciones = e.target.checked; applyCurrentFilters(); });
-  document.getElementById('onlyFTTH').addEventListener('change', e => { onlyFTTH = e.target.checked; if (onlyFTTH){ excludeFTTH=false; document.getElementById('excludeFTTH').checked=false; } applyCurrentFilters(); });
-  document.getElementById('excludeFTTH').addEventListener('change', e => { excludeFTTH = e.target.checked; if (excludeFTTH){ onlyFTTH=false; document.getElementById('onlyFTTH').checked=false; } applyCurrentFilters(); });
-  document.getElementById('daysWindow').addEventListener('change', e => { DAYS_WINDOW = parseInt(e.target.value||'3',10); applyCurrentFilters(); });
+  document.getElementById('toggleInstalaciones').addEventListener('change', e => { 
+    includeInstalaciones = e.target.checked; 
+    applyCurrentFilters(); 
+  });
+  document.getElementById('onlyFTTH').addEventListener('change', e => { 
+    onlyFTTH = e.target.checked; 
+    if (onlyFTTH){ 
+      excludeFTTH=false; 
+      document.getElementById('excludeFTTH').checked=false; 
+    } 
+    applyCurrentFilters(); 
+  });
+  document.getElementById('excludeFTTH').addEventListener('change', e => { 
+    excludeFTTH = e.target.checked; 
+    if (excludeFTTH){ 
+      onlyFTTH=false; 
+      document.getElementById('onlyFTTH').checked=false; 
+    } 
+    applyCurrentFilters(); 
+  });
+  document.getElementById('daysWindow').addEventListener('change', e => { 
+    DAYS_WINDOW = parseInt(e.target.value||'3',10); 
+    applyCurrentFilters(); 
+  });
 
   document.getElementById('applyFiltersBtn').addEventListener('click', applyFilters);
   document.getElementById('clearFiltersBtn').addEventListener('click', clearFilters);
@@ -410,7 +433,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // ✅ Listener de CMTS (fuera del forEach)
+  // Listener de CMTS
   const cmtsSel = document.getElementById('cmtsSelect');
   if (cmtsSel) {
     cmtsSel.addEventListener('change', () => {
@@ -418,7 +441,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // (opcional) debounce para búsqueda rápida si no lo tenés arriba
+  // Búsqueda rápida
   let searchTimeout;
   const q = document.getElementById('quickSearch');
   if (q) {
@@ -427,50 +450,57 @@ document.addEventListener('DOMContentLoaded', () => {
       searchTimeout = setTimeout(() => { if (processedData) displayData(currentTab); }, 300);
     });
   }
-});
 
+  // Salud + Nodos
+  document.getElementById('fileInputHealth').addEventListener('change', handleFileSelectHealth);
+  document.getElementById('fileInputNodes').addEventListener('change', handleFileSelectNodes);
+  document.getElementById('toggleUseHealth').addEventListener('change', (e) => {
+    useHealth = e.target.checked;
+    document.getElementById('healthFilters').style.display = useHealth && healthByZone.size ? 'flex' : 'none';
+    if (currentTab === 'dispositivos') displayData('dispositivos');
+  });
+  document.getElementById('clearHealthBtn').addEventListener('click', () => {
+    healthByZone.clear(); 
+    nodesByZone.clear(); 
+    useHealth=false; 
+    selectedHealthZone=null; 
+    selectedHealthState='all';
+    document.getElementById('toggleUseHealth').checked=false;
+    document.getElementById('healthFilters').style.display='none';
+    if (processedData) displayData(currentTab);
+  });
+  document.getElementById('healthZoneSelect').addEventListener('change', e => { 
+    selectedHealthZone = e.target.value || null; 
+    if (currentTab==='dispositivos') displayData('dispositivos'); 
+  });
+  document.getElementById('healthStateSelect').addEventListener('change', e => { 
+    selectedHealthState = e.target.value; 
+    if (currentTab==='dispositivos') displayData('dispositivos'); 
+  });
 
-
-   
-
-    // Salud + Nodos
-    document.getElementById('fileInputHealth').addEventListener('change', handleFileSelectHealth);
-    document.getElementById('fileInputNodes').addEventListener('change', handleFileSelectNodes);
-    document.getElementById('toggleUseHealth').addEventListener('change', (e) => {
-      useHealth = e.target.checked;
-      document.getElementById('healthFilters').style.display = useHealth && healthByZone.size ? 'flex' : 'none';
-      if (currentTab === 'dispositivos') displayData('dispositivos');
-    });
-    document.getElementById('clearHealthBtn').addEventListener('click', () => {
-      healthByZone.clear(); nodesByZone.clear(); useHealth=false; selectedHealthZone=null; selectedHealthState='all';
-      document.getElementById('toggleUseHealth').checked=false;
-      document.getElementById('healthFilters').style.display='none';
+  // Tabs
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', function(){
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      this.classList.add('active');
+      currentTab = this.dataset.tab;
       if (processedData) displayData(currentTab);
     });
-    document.getElementById('healthZoneSelect').addEventListener('change', e => { selectedHealthZone = e.target.value || null; if (currentTab==='dispositivos') displayData('dispositivos'); });
-    document.getElementById('healthStateSelect').addEventListener('change', e => { selectedHealthState = e.target.value; if (currentTab==='dispositivos') displayData('dispositivos'); });
+  });
 
-    // Tabs
-    document.querySelectorAll('.tab').forEach(tab => {
-      tab.addEventListener('click', function(){
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        this.classList.add('active');
-        currentTab = this.dataset.tab;
-        if (processedData) displayData(currentTab);
-      });
-    });
+  // Modal
+  document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+  window.addEventListener('click', (e) => { 
+    const modal = document.getElementById('zoneModal'); 
+    if (e.target === modal) closeModal(); 
+  });
 
-    // Modal
-    document.getElementById('closeModalBtn').addEventListener('click', closeModal);
-    window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
-    window.addEventListener('click', (e) => { const modal = document.getElementById('zoneModal'); if (e.target === modal) closeModal(); });
+  // Export global
+  document.getElementById('downloadBtn').addEventListener('click', downloadAnalysis);
 
-    // Export global
-    document.getElementById('downloadBtn').addEventListener('click', downloadAnalysis);
-
-    updateFooterInfo();
-
-
+  updateFooterInfo();
+});
 // ========= PARSERS / LOADERS =========
 
 async function handleFileSelectA(e) {
