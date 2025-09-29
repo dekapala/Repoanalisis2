@@ -132,21 +132,27 @@ body.modal-open { overflow: hidden; }
         </select>
       </div>
 
-      <!-- Rango & Búsqueda -->
-      <div class="control-group">
-        <span class="group-title">RANGO & BÚSQUEDA</span>
-        <label style="color:#6b7280;font-weight:700;">Desde</label>
-        <input id="startInput" type="datetime-local">
-        <label style="color:#6b7280;font-weight:700;">Hasta</label>
-        <input id="endInput" type="datetime-local">
-        <button class="btn" id="applyFiltersBtn" style="background:#111827;color:#fff;">Aplicar</button>
-        <button class="btn" id="clearFiltersBtn" style="background:#374151;color:#fff;">Limpiar</button>
-        <input id="quickSearch" type="text" placeholder="Buscar por zona o dirección..." style="min-width:230px;">
-        <label style="color:#6b7280;font-weight:700;">CMTS</label>
-<select id="cmtsSelect" style="min-width:180px;">
-  <option value="">Todos</option>
-   </select>
-      </div>
+    <!-- Rango & Búsqueda -->
+<div class="control-group">
+  <span class="group-title">RANGO & BÚSQUEDA</span>
+  <label style="color:#6b7280;font-weight:700;">Desde</label>
+  <input id="startInput" type="datetime-local">
+  <label style="color:#6b7280;font-weight:700;">Hasta</label>
+  <input id="endInput" type="datetime-local">
+  <button class="btn" id="applyFiltersBtn" style="background:#111827;color:#fff;">Aplicar</button>
+  <button class="btn" id="clearFiltersBtn" style="background:#374151;color:#fff;">Limpiar</button>
+  <input id="quickSearch" type="text" placeholder="Buscar por zona o dirección..." style="min-width:230px;">
+  <label style="color:#6b7280;font-weight:700;">CMTS</label>
+  <select id="cmtsSelect" style="min-width:180px;">
+    <option value="">Todos</option>
+  </select>
+  <!-- ⬇️ AGREGAR AQUÍ ⬇️ -->
+  <label style="color:#6b7280;font-weight:700;">Región</label>
+  <select id="regionSelect" style="min-width:180px;">
+    <option value="">Todas</option>
+  </select>
+  <!-- ⬆️ HASTA AQUÍ ⬆️ -->
+</div>
 <!-- BÚSQUEDA AVANZADA -->
 <div class="control-group">
   <span class="group-title">BÚSQUEDA AVANZADA</span>
@@ -441,6 +447,14 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Listener de Región
+  const regionSel = document.getElementById('regionSelect');
+  if (regionSel) {
+    regionSel.addEventListener('change', () => {
+      if (processedData) displayData('zonas');
+    });
+  }
+
   // Búsqueda rápida
   let searchTimeout;
   const q = document.getElementById('quickSearch');
@@ -729,7 +743,7 @@ function extractRowsFromWorkbook(workbook, collectStates = false){
     applyCurrentFilters();
   }
 
-  function applyCurrentFilters(){
+function applyCurrentFilters(){
     let rows = dataRowsA || [];
     if (useMergeB && dataRowsB && dataRowsB.length) rows = mergeDatasets(rows, dataRowsB);
 
@@ -760,6 +774,17 @@ function extractRowsFromWorkbook(workbook, collectStates = false){
     updateZoneDetailsMap(currentFilteredRows);
     displayStatistics(processedData);
     displayData(currentTab);
+    
+    // ⬇️ AGREGAR AQUÍ ⬇️
+    // Poblar selector de regiones
+    const regionSelect = document.getElementById('regionSelect');
+    if (regionSelect && processedData.zonas) {
+      const regiones = [...new Set(processedData.zonas.map(z => z.territorio).filter(Boolean))].sort();
+      regionSelect.innerHTML = '<option value="">Todas</option>' + 
+        regiones.map(r => `<option value="${r}">${r}</option>`).join('');
+    }
+    // ⬆️ HASTA AQUÍ ⬆️
+    
     updateFooterInfo();
   }
 
@@ -1438,6 +1463,28 @@ async function handleFileSelectNodes(e){
     arr = arr.filter(z => String(z.cmts||'').toUpperCase() === selCmts);
   }
 
+  // ✅ NUEVO: Filtro por umbral de ingresos
+  const minIngreso = parseInt(document.getElementById('ingresoMin')?.value || '0', 10);
+  if (minIngreso > 0) {
+    arr = arr.filter(z => (z.ingresoN >= minIngreso) || (z.ingresoN1 >= minIngreso));
+  }
+
+  // ✅ NUEVO: Ordenamiento dinámico
+  const orderBy = document.getElementById('orderBy')?.value || 'score';
+  arr.sort((a, b) => {
+    switch(orderBy) {
+      case 'ingresoN':
+        return (b.ingresoN || 0) - (a.ingresoN || 0);
+      case 'ingresoN1':
+        return (b.ingresoN1 || 0) - (a.ingresoN1 || 0);
+      case 'totalOTs':
+        return (b.totalOTs || 0) - (a.totalOTs || 0);
+      case 'score':
+      default:
+        return (b.scoreZona || 0) - (a.scoreZona || 0);
+    }
+  });
+
   const head = `
     <thead>
       <tr>
@@ -1472,10 +1519,9 @@ async function handleFileSelectNodes(e){
   }).join('');
 
   return `
-    <div class="preview-title">📍 Análisis de Zonas</div>
+    <div class="preview-title">📍 Análisis de Zonas (${arr.length} resultados)</div>
     <div class="table-container"><table>${head}<tbody>${rows}</tbody></table></div>`;
 }
-
   /* === Series para minigráficos del modal === */
   function zoneBuildTimeSeries(zoneRows){
     const dayCounts  = Array(7).fill(0); // index 0 = N-6 ... index 6 = N
