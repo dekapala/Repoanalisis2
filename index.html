@@ -239,6 +239,12 @@ body.modal-open { overflow: hidden; }
 
 <script>
   /* ========= ESTADO GLOBAL ========= */
+  const stateCatalog = {
+  estado1: new Set(),
+  estado2: new Set(),
+  estado3: new Set()
+};
+
   let processedData = null;
   let currentTab = 'edificios';
 
@@ -425,11 +431,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 
-    let searchTimeout;
-    document.getElementById('quickSearch').addEventListener('input', () => {
-      clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(() => { if (processedData) displayData(currentTab); }, 300);
-    });
+   
 
     // Salud + Nodos
     document.getElementById('fileInputHealth').addEventListener('change', handleFileSelectHealth);
@@ -471,7 +473,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ========= PARSERS / LOADERS =========
 
- async function handleFileSelectA(e) {
+async function handleFileSelectA(e) {
   const file = e.target.files[0]; if (!file) return;
   document.getElementById('fileName').textContent = '📄 ' + file.name;
   showLoading('Procesando Reporte A...');
@@ -479,7 +481,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const data = new Uint8Array(await file.arrayBuffer());
     const wb = XLSX.read(data, { type:'array', cellDates:true });
 
-    // Parsear A (con catálogo, por si después lo usás)
+    // Parsear A y recolectar catálogo de estados
     dataRowsA = extractRowsFromWorkbook(wb, /*collectStates=*/true);
 
     // Activar UI
@@ -489,8 +491,27 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('alertSection').innerHTML = '';
 
     applyCurrentFilters();
-  } catch(err){ showError('Error al leer Reporte A: ' + err.message); }
+  } catch(err){
+    showError('Error al leer Reporte A: ' + err.message);
+  }
 }
+  
+async function handleFileSelectB(e) {
+  const file = e.target.files[0]; if (!file) return;
+  showLoading('Procesando Reporte B...');
+  try {
+    const data = new Uint8Array(await file.arrayBuffer());
+    const wb = XLSX.read(data, { type:'array', cellDates:true });
+
+    // B SIN catálogo de estados
+    dataRowsB = extractRowsFromWorkbook(wb, /*collectStates=*/false);
+
+    applyCurrentFilters();
+  } catch(err){
+    showError('Error al leer Reporte B: ' + err.message);
+  }
+}
+
 
       // ===== PUNTO 3.3: parsear B SIN recolectar catálogo de estados =====
       dataRowsB = extractRowsFromWorkbook(wb, /*collectStates=*/false);
