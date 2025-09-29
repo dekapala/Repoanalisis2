@@ -1452,8 +1452,28 @@ async function handleFileSelectNodes(e){
 function displayZonas(zonas){
   if (!zonas.length) return '<div class="loading"><p>No se encontraron zonas</p></div>';
 
+  // Búsqueda rápida (por zona)
   const q = (document.getElementById('quickSearch')?.value || '').trim().toLowerCase();
   let arr = q ? zonas.filter(z => (z.zona||'').toLowerCase().includes(q)) : zonas.slice();
+
+  // ✅ BÚSQUEDA AVANZADA (advQuery)
+  const advQuery = (document.getElementById('advQuery')?.value || '').trim().toLowerCase();
+  if (advQuery) {
+    // Divide por "+" para buscar múltiples términos (ej: "cordoba + flex")
+    const terms = advQuery.split('+').map(t => t.trim()).filter(t => t);
+    if (terms.length > 0) {
+      arr = arr.filter(z => {
+        const searchText = [
+          z.zona || '',
+          z.territorio || '',
+          z.cmts || ''
+        ].join(' ').toLowerCase();
+        
+        // Debe cumplir TODOS los términos (AND lógico)
+        return terms.every(term => searchText.includes(term));
+      });
+    }
+  }
 
   // ✅ Filtro por CMTS
   const selCmts = (document.getElementById('cmtsSelect')?.value || '').toUpperCase();
