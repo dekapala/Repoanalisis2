@@ -108,33 +108,7 @@ body.modal-open { overflow: hidden; }
           <span>Cruzar con B</span>
         </label>
       </div>
-<!-- ESTADOS (AVANZADO) -->
-<div class="control-group" id="estadoFilterGroup">
-  <span class="group-title">ESTADOS (AVANZADO)</span>
 
-  <label style="display:flex;align-items:center;gap:6px;">
-    <input type="checkbox" id="estadoFilterEnabled">
-    <span>Filtrar por estados</span>
-  </label>
-
-  <div style="display:flex;gap:10px;align-items:center;">
-    <span style="color:#6b7280;font-weight:700;">Buscar en:</span>
-    <label><input type="checkbox" id="estadoUseE1" checked> E1</label>
-    <label><input type="checkbox" id="estadoUseE2" checked> E2</label>
-    <label><input type="checkbox" id="estadoUseE3" checked> E3</label>
-
-    <label style="margin-left:8px;color:#6b7280;font-weight:700;">Coincidencia</label>
-    <select id="estadoMatchMode">
-      <option value="any">Cualquiera</option>
-      <option value="all">Todas</option>
-    </select>
-
-    <button class="btn" id="estadoSelectAllBtn">Marcar todo</button>
-    <button class="btn" id="estadoClearAllBtn">Limpiar</button>
-  </div>
-
-  <div id="estadoOptions" style="max-height:120px;overflow:auto;padding:6px 4px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;min-width:260px;"></div>
-</div>
       <!-- Filtros base -->
       <div class="control-group">
         <span class="group-title">FILTROS BASE</span>
@@ -169,6 +143,27 @@ body.modal-open { overflow: hidden; }
         <button class="btn" id="clearFiltersBtn" style="background:#374151;color:#fff;">Limpiar</button>
         <input id="quickSearch" type="text" placeholder="Buscar por zona o dirección..." style="min-width:230px;">
       </div>
+<!-- BÚSQUEDA AVANZADA -->
+<div class="control-group">
+  <span class="group-title">BÚSQUEDA AVANZADA</span>
+
+  <input id="advQuery" type="text" placeholder="Ej: cordoba norte flex + rio cuarto" style="min-width:280px;">
+  
+  <label style="color:#6b7280;font-weight:700;">Ingresos mínimos</label>
+  <select id="ingresoMin">
+    <option value="0" selected>Todos</option>
+    <option value="3">≥ 3 (pico)</option>
+    <option value="5">≥ 5 (muy alto)</option>
+  </select>
+
+  <label style="color:#6b7280;font-weight:700;">Ordenar por</label>
+  <select id="orderBy">
+    <option value="score" selected>Score (default)</option>
+    <option value="ingresoN">Ingreso N</option>
+    <option value="ingresoN1">Ingreso N-1</option>
+    <option value="totalOTs">Total OTs</option>
+  </select>
+</div>
 
       <!-- Salud + Nodos -->
       <div class="control-group">
@@ -296,26 +291,6 @@ body.modal-open { overflow: hidden; }
   let selectedHealthState = 'all';
   let nodesByZone = new Map();  // Map<ZONA, {up:number, down:number}>
 
-  // === 3.2 Filtro avanzado por ESTADOS (O, P, Q) ===
-const STATE_KEYS = ['estado1','estado2','estado3']; // mapean a columnas O,P,Q detectadas
-
-// Catálogo de opciones disponibles (se completa al leer el reporte A)
-let stateCatalog = {
-  estado1: new Set(),
-  estado2: new Set(),
-  estado3: new Set(),
-};
-
-// Selección actual del usuario (checks tildados)
-let selectedStates = {
-  estado1: new Set(),
-  estado2: new Set(),
-  estado3: new Set(),
-};
-
-// Config del filtro
-let useStateFilter = false;     // master ON/OFF
-let stateMode = 'include';      // 'include' (mostrar solo seleccionados) | 'exclude' (ocultar seleccionados)
 
 
   /* ========= UTILS ========= */
@@ -410,6 +385,21 @@ function findHeaderRow(rows) {
     document.getElementById('applyFiltersBtn').addEventListener('click', applyFilters);
     document.getElementById('clearFiltersBtn').addEventListener('click', clearFilters);
 
+let advTimeout;
+['advQuery','ingresoMin','orderBy'].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (id === 'advQuery') {
+    el.addEventListener('input', () => {
+      clearTimeout(advTimeout);
+      advTimeout = setTimeout(() => { if (processedData) displayData(currentTab); }, 300);
+    });
+  } else {
+    el.addEventListener('change', () => { if (processedData) displayData(currentTab); });
+  }
+});
+
+
     let searchTimeout;
     document.getElementById('quickSearch').addEventListener('input', () => {
       clearTimeout(searchTimeout);
@@ -464,19 +454,8 @@ function findHeaderRow(rows) {
       const data = new Uint8Array(await file.arrayBuffer());
       const wb = XLSX.read(data, { type:'array', cellDates:true });
 
-      // ===== PUNTO 3.3: resetear catálogos/selección de estados y parsear recolectando =====
-      stateCatalog  = { estado1:new Set(), estado2:new Set(), estado3:new Set() };
-      selectedStates= { estado1:new Set(), estado2:new Set(), estado3:new Set() };
-      useStateFilter = false;
-      const tgl = document.getElementById('toggleStateFilter'); if (tgl) tgl.checked = false;
-
-      dataRowsA = extractRowsFromWorkbook(wb, /*collectStates=*/true);
-      globalDataRows = dataRowsA;
-
-      // ===== PUNTO 3.4: construir los checkboxes de estado con lo recolectado =====
-      if (typeof renderStateChecks === 'function') renderStateChecks();
-
-      document.getElementById('downloadBtn').style.display = 'inline-flex';
+    
+        document.getElementById('downloadBtn').style.display = 'inline-flex';
       document.getElementById('statsSection').classList.remove('hidden');
       document.getElementById('tabsSection').classList.remove('hidden');
       document.getElementById('alertSection').innerHTML = '';
@@ -1065,7 +1044,7 @@ result.zonas.sort((a, b) =>
   }
 
   /* ========= UP & DOWN NODES ========= */
- async function handleFileSelectNodes(e){
+async function handleFileSelectNodes(e){
   const file = e.target.files[0]; if (!file) return;
   nodesByZone.clear();
   nodeToCmts.clear();
@@ -1075,11 +1054,9 @@ result.zonas.sort((a, b) =>
     const wb = XLSX.read(data, { type:'array', cellDates:true });
     const sh = wb.Sheets[wb.SheetNames[0]];
 
-    // raw:true evita formatos raros (separadores, etc.)
     const rows = XLSX.utils.sheet_to_json(sh, { header:1, defval:'', raw:true });
     if (!rows.length) return;
 
-    // Detectar encabezado
     const headerRow = findHeaderRow(rows);
     let hdr = [], start = 0;
     if (headerRow !== -1){
@@ -1094,6 +1071,53 @@ result.zonas.sort((a, b) =>
       }
       return -1;
     };
+
+    let cmtsCol = findCol(['cmts']);
+    let nodoCol = findCol(['nodo','node']);
+    let upCol   = findCol(['up','online','activos','upstream']);
+    let dnCol   = findCol(['down','offline','caidos','caído','downstream']);
+
+    if (headerRow === -1){
+      if (cmtsCol === -1) cmtsCol = 1;
+      if (nodoCol === -1) nodoCol = 2;
+      if (upCol   === -1) upCol   = 3;
+      if (dnCol   === -1) dnCol   = 4;
+    }
+
+    let parsed = 0;
+    for (let i = start; i < rows.length; i++){
+      const r = rows[i]; if (!r || !r.length) continue;
+
+      const nodoRaw = nodoCol !== -1 ? r[nodoCol] : (r[0] ?? '');
+      const zonaKey = canonicalizeZone(nodoRaw);
+      if (!zonaKey) continue;
+
+      const cmtsVal = cmtsCol !== -1 ? String(r[cmtsCol] || '').toUpperCase().trim() : '';
+      if (cmtsVal) nodeToCmts.set(zonaKey, cmtsVal);
+
+      const up   = toInt(upCol !== -1 ? r[upCol] : 0);
+      const down = toInt(dnCol !== -1 ? r[dnCol] : 0);
+
+      const prev = nodesByZone.get(zonaKey) || { up:0, down:0 };
+      nodesByZone.set(zonaKey, { up: prev.up + up, down: prev.down + down });
+      parsed++;
+    }
+
+    // ✅ Poblar lista de CMTS AQUÍ (ya está nodeToCmts)
+    const cmtsSelect = document.getElementById('cmtsSelect');
+    if (cmtsSelect) {
+      const uniqueCmts = Array.from(new Set(Array.from(nodeToCmts.values()))).sort();
+      cmtsSelect.innerHTML = '<option value="">Todos</option>' +
+        uniqueCmts.map(c => `<option value="${c}">${c}</option>`).join('');
+    }
+
+    if (processedData && currentTab === 'zonas') displayData('zonas');
+    if (!parsed) showError('No se pudieron leer filas de Up&Down Nodes. Revisá encabezados: CMTS / Nodo / Up / Down.');
+  } catch(err){
+    showError('Error al leer Up&Down Nodes: ' + err.message);
+  }
+}
+
 
     // Columnas (según tu captura: Fecha | CMTS | Nodo | Up | Down | Unknown)
     let cmtsCol = findCol(['cmts']);
@@ -1377,48 +1401,55 @@ result.zonas.sort((a, b) =>
   }
 
   // ===== Render: Zonas =====
-  function displayZonas(zonas){
-    if (!zonas.length) return '<div class="loading"><p>No se encontraron zonas</p></div>';
-    const q = (document.getElementById('quickSearch')?.value || '').trim().toLowerCase();
-    const arr = q ? zonas.filter(z => (z.zona||'').toLowerCase().includes(q)) : zonas;
+ function displayZonas(zonas){
+  if (!zonas.length) return '<div class="loading"><p>No se encontraron zonas</p></div>';
 
-    const head = `
-      <thead>
-        <tr>
-          <th>Zona</th>
-          <th>Total OTs</th>
-          <th>Ingreso N</th>
-          <th>Ingreso N-1</th>
-          <th>% CATEC</th>
-          <th>Ingresos 7d (L..D)</th>
-          <th>Territorio</th>
-          <th>CMS UP</th>
-          <th>CMS DOWN</th>
-          <th>Acción</th>
-        </tr>
-      </thead>`;
+  const q = (document.getElementById('quickSearch')?.value || '').trim().toLowerCase();
+  let arr = q ? zonas.filter(z => (z.zona||'').toLowerCase().includes(q)) : zonas.slice();
 
-    const rows = arr.map(z => {
-      const rowClass = (z.nivelRiesgo === 'CRÍTICO' && Number(z.cmsDown||0)>0) ? ' class="row-critical-down"' : '';
-      return `
-        <tr${rowClass}>
-          <td><strong>${z.zona}</strong></td>
-          <td>${z.totalOTs}</td>
-          <td>${z.ingresoN} ${deltaBadge(z.ingresoN, z.ingresoN1)}</td>
-          <td>${z.ingresoN1}</td>
-          <td><strong>${(z.catecRate||0)}%</strong> <span class="pill">${z.catecCount||0} CATEC</span></td>
-          <td>${renderWeekBars(z.weekCounts||[])}</td>
-          <td>${z.territorio || '-'}</td>
-          <td>${Number(z.cmsUp||0)}</td>
-          <td>${Number(z.cmsDown||0)}</td>
-          <td><button class="btn" onclick="openZoneModal('${z.zona.replace(/'/g,"&#39;")}')">🔎 Ver</button></td>
-        </tr>`;
-    }).join('');
-
-    return `
-      <div class="preview-title">📍 Análisis de Zonas</div>
-      <div class="table-container"><table>${head}<tbody>${rows}</tbody></table></div>`;
+  // ✅ Filtro por CMTS
+  const selCmts = (document.getElementById('cmtsSelect')?.value || '').toUpperCase();
+  if (selCmts) {
+    arr = arr.filter(z => String(z.cmts||'').toUpperCase() === selCmts);
   }
+
+  const head = `
+    <thead>
+      <tr>
+        <th>Zona</th>
+        <th>Total OTs</th>
+        <th>Ingreso N</th>
+        <th>Ingreso N-1</th>
+        <th>% CATEC</th>
+        <th>Ingresos 7d (L..D)</th>
+        <th>Territorio</th>
+        <th>CMS UP</th>
+        <th>CMS DOWN</th>
+        <th>Acción</th>
+      </tr>
+    </thead>`;
+
+  const rows = arr.map(z => {
+    const rowClass = (z.nivelRiesgo === 'CRÍTICO' && Number(z.cmsDown||0)>0) ? ' class="row-critical-down"' : '';
+    return `
+      <tr${rowClass}>
+        <td><strong>${z.zona}</strong></td>
+        <td>${z.totalOTs}</td>
+        <td>${z.ingresoN} ${deltaBadge(z.ingresoN, z.ingresoN1)}</td>
+        <td>${z.ingresoN1}</td>
+        <td><strong>${(z.catecRate||0)}%</strong> <span class="pill">${z.catecCount||0} CATEC</span></td>
+        <td>${renderWeekBars(z.weekCounts||[])}</td>
+        <td>${z.territorio || '-'}</td>
+        <td>${Number(z.cmsUp||0)}</td>
+        <td>${Number(z.cmsDown||0)}</td>
+        <td><button class="btn" onclick="openZoneModal('${z.zona.replace(/'/g,"&#39;")}')">🔎 Ver</button></td>
+      </tr>`;
+  }).join('');
+
+  return `
+    <div class="preview-title">📍 Análisis de Zonas</div>
+    <div class="table-container"><table>${head}<tbody>${rows}</tbody></table></div>`;
+}
 
   /* === Series para minigráficos del modal === */
   function zoneBuildTimeSeries(zoneRows){
