@@ -142,6 +142,10 @@ body.modal-open { overflow: hidden; }
         <button class="btn" id="applyFiltersBtn" style="background:#111827;color:#fff;">Aplicar</button>
         <button class="btn" id="clearFiltersBtn" style="background:#374151;color:#fff;">Limpiar</button>
         <input id="quickSearch" type="text" placeholder="Buscar por zona o dirección..." style="min-width:230px;">
+        <label style="color:#6b7280;font-weight:700;">CMTS</label>
+<select id="cmtsSelect" style="min-width:180px;">
+  <option value="">Todos</option>
+   </select>
       </div>
 <!-- BÚSQUEDA AVANZADA -->
 <div class="control-group">
@@ -371,33 +375,54 @@ function findHeaderRow(rows) {
   return -1;
 }
 
-  /* ========= LISTENERS ========= */
-  document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('fileInput').addEventListener('change', handleFileSelectA);
-    document.getElementById('fileInputB').addEventListener('change', handleFileSelectB);
-    document.getElementById('toggleMergeB').addEventListener('change', e => { useMergeB = e.target.checked; applyCurrentFilters(); });
+/* ========= LISTENERS ========= */
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('fileInput').addEventListener('change', handleFileSelectA);
+  document.getElementById('fileInputB').addEventListener('change', handleFileSelectB);
+  document.getElementById('toggleMergeB').addEventListener('change', e => { useMergeB = e.target.checked; applyCurrentFilters(); });
 
-    document.getElementById('toggleInstalaciones').addEventListener('change', e => { includeInstalaciones = e.target.checked; applyCurrentFilters(); });
-    document.getElementById('onlyFTTH').addEventListener('change', e => { onlyFTTH = e.target.checked; if (onlyFTTH){ excludeFTTH=false; document.getElementById('excludeFTTH').checked=false; } applyCurrentFilters(); });
-    document.getElementById('excludeFTTH').addEventListener('change', e => { excludeFTTH = e.target.checked; if (excludeFTTH){ onlyFTTH=false; document.getElementById('onlyFTTH').checked=false; } applyCurrentFilters(); });
-    document.getElementById('daysWindow').addEventListener('change', e => { DAYS_WINDOW = parseInt(e.target.value||'3',10); applyCurrentFilters(); });
+  document.getElementById('toggleInstalaciones').addEventListener('change', e => { includeInstalaciones = e.target.checked; applyCurrentFilters(); });
+  document.getElementById('onlyFTTH').addEventListener('change', e => { onlyFTTH = e.target.checked; if (onlyFTTH){ excludeFTTH=false; document.getElementById('excludeFTTH').checked=false; } applyCurrentFilters(); });
+  document.getElementById('excludeFTTH').addEventListener('change', e => { excludeFTTH = e.target.checked; if (excludeFTTH){ onlyFTTH=false; document.getElementById('onlyFTTH').checked=false; } applyCurrentFilters(); });
+  document.getElementById('daysWindow').addEventListener('change', e => { DAYS_WINDOW = parseInt(e.target.value||'3',10); applyCurrentFilters(); });
 
-    document.getElementById('applyFiltersBtn').addEventListener('click', applyFilters);
-    document.getElementById('clearFiltersBtn').addEventListener('click', clearFilters);
+  document.getElementById('applyFiltersBtn').addEventListener('click', applyFilters);
+  document.getElementById('clearFiltersBtn').addEventListener('click', clearFilters);
 
-let advTimeout;
-['advQuery','ingresoMin','orderBy'].forEach(id => {
-  const el = document.getElementById(id);
-  if (!el) return;
-  if (id === 'advQuery') {
-    el.addEventListener('input', () => {
-      clearTimeout(advTimeout);
-      advTimeout = setTimeout(() => { if (processedData) displayData(currentTab); }, 300);
+  // Búsqueda avanzada / orden / umbral
+  let advTimeout;
+  ['advQuery','ingresoMin','orderBy'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (id === 'advQuery') {
+      el.addEventListener('input', () => {
+        clearTimeout(advTimeout);
+        advTimeout = setTimeout(() => { if (processedData) displayData(currentTab); }, 300);
+      });
+    } else {
+      el.addEventListener('change', () => { if (processedData) displayData(currentTab); });
+    }
+  });
+
+  // ✅ Listener de CMTS (fuera del forEach)
+  const cmtsSel = document.getElementById('cmtsSelect');
+  if (cmtsSel) {
+    cmtsSel.addEventListener('change', () => {
+      if (processedData) displayData('zonas');
     });
-  } else {
-    el.addEventListener('change', () => { if (processedData) displayData(currentTab); });
+  }
+
+  // (opcional) debounce para búsqueda rápida si no lo tenés arriba
+  let searchTimeout;
+  const q = document.getElementById('quickSearch');
+  if (q) {
+    q.addEventListener('input', () => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => { if (processedData) displayData(currentTab); }, 300);
+    });
   }
 });
+
 
 
     let searchTimeout;
@@ -444,30 +469,28 @@ let advTimeout;
     updateFooterInfo();
   });
 
- <!-- ========= PARSERS / LOADERS ========= -->
+// ========= PARSERS / LOADERS =========
 
-  async function handleFileSelectA(e) {
-    const file = e.target.files[0]; if (!file) return;
-    document.getElementById('fileName').textContent = '📄 ' + file.name;
-    showLoading('Procesando Reporte A...');
-    try {
-      const data = new Uint8Array(await file.arrayBuffer());
-      const wb = XLSX.read(data, { type:'array', cellDates:true });
+ async function handleFileSelectA(e) {
+  const file = e.target.files[0]; if (!file) return;
+  document.getElementById('fileName').textContent = '📄 ' + file.name;
+  showLoading('Procesando Reporte A...');
+  try {
+    const data = new Uint8Array(await file.arrayBuffer());
+    const wb = XLSX.read(data, { type:'array', cellDates:true });
 
-    
-        document.getElementById('downloadBtn').style.display = 'inline-flex';
-      document.getElementById('statsSection').classList.remove('hidden');
-      document.getElementById('tabsSection').classList.remove('hidden');
-      document.getElementById('alertSection').innerHTML = '';
-      applyCurrentFilters();
-    } catch(err){ showError('Error al leer Reporte A: ' + err.message); }
-  }
+    // Parsear A (con catálogo, por si después lo usás)
+    dataRowsA = extractRowsFromWorkbook(wb, /*collectStates=*/true);
 
-  async function handleFileSelectB(e) {
-    const file = e.target.files[0]; if (!file) return;
-    try {
-      const data = new Uint8Array(await file.arrayBuffer());
-      const wb = XLSX.read(data, { type:'array', cellDates:true });
+    // Activar UI
+    document.getElementById('downloadBtn').style.display = 'inline-flex';
+    document.getElementById('statsSection').classList.remove('hidden');
+    document.getElementById('tabsSection').classList.remove('hidden');
+    document.getElementById('alertSection').innerHTML = '';
+
+    applyCurrentFilters();
+  } catch(err){ showError('Error al leer Reporte A: ' + err.message); }
+}
 
       // ===== PUNTO 3.3: parsear B SIN recolectar catálogo de estados =====
       dataRowsB = extractRowsFromWorkbook(wb, /*collectStates=*/false);
@@ -1118,12 +1141,6 @@ async function handleFileSelectNodes(e){
   }
 }
 
-
-    // Columnas (según tu captura: Fecha | CMTS | Nodo | Up | Down | Unknown)
-    let cmtsCol = findCol(['cmts']);
-    let nodoCol = findCol(['nodo','node']);     // preferimos Nodo como “zona”
-    let upCol   = findCol(['up','online','activos','upstream']);
-    let dnCol   = findCol(['down','offline','caidos','caído','downstream']);
 
     // Sin header claro: asumir [*, CMTS, Nodo, Up, Down]
     if (headerRow === -1){
