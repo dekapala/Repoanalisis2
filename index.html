@@ -132,7 +132,7 @@ body.modal-open { overflow: hidden; }
         </select>
       </div>
 
-    <!-- Rango & Búsqueda -->
+<!-- Rango & Búsqueda -->
 <div class="control-group">
   <span class="group-title">RANGO & BÚSQUEDA</span>
   <label style="color:#6b7280;font-weight:700;">Desde</label>
@@ -146,12 +146,10 @@ body.modal-open { overflow: hidden; }
   <select id="cmtsSelect" style="min-width:180px;">
     <option value="">Todos</option>
   </select>
-  <!-- ⬇️ AGREGAR AQUÍ ⬇️ -->
   <label style="color:#6b7280;font-weight:700;">Región</label>
   <select id="regionSelect" style="min-width:180px;">
     <option value="">Todas</option>
   </select>
-  <!-- ⬆️ HASTA AQUÍ ⬆️ -->
 </div>
 <!-- BÚSQUEDA AVANZADA -->
 <div class="control-group">
@@ -1451,7 +1449,7 @@ async function handleFileSelectNodes(e){
   }
 
   // ===== Render: Zonas =====
- function displayZonas(zonas){
+function displayZonas(zonas){
   if (!zonas.length) return '<div class="loading"><p>No se encontraron zonas</p></div>';
 
   const q = (document.getElementById('quickSearch')?.value || '').trim().toLowerCase();
@@ -1463,13 +1461,19 @@ async function handleFileSelectNodes(e){
     arr = arr.filter(z => String(z.cmts||'').toUpperCase() === selCmts);
   }
 
-  // ✅ NUEVO: Filtro por umbral de ingresos
+  // ✅ Filtro por Región/Territorio
+  const selRegion = (document.getElementById('regionSelect')?.value || '').toUpperCase();
+  if (selRegion) {
+    arr = arr.filter(z => String(z.territorio||'').toUpperCase().includes(selRegion));
+  }
+
+  // ✅ Filtro por umbral de ingresos
   const minIngreso = parseInt(document.getElementById('ingresoMin')?.value || '0', 10);
   if (minIngreso > 0) {
     arr = arr.filter(z => (z.ingresoN >= minIngreso) || (z.ingresoN1 >= minIngreso));
   }
 
-  // ✅ NUEVO: Ordenamiento dinámico
+  // ✅ Ordenamiento dinámico
   const orderBy = document.getElementById('orderBy')?.value || 'score';
   arr.sort((a, b) => {
     switch(orderBy) {
